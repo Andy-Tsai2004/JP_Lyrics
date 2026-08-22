@@ -187,7 +187,7 @@ export async function fetchLyrics(target: string): Promise<LyricsResult> {
   throw new Error(
     fetchedAny
       ? utaNet
-        ? "No lyric lines were found on this Uta-Net page. The site may be blocking the request — try again in a moment."
+        ? "No lyric lines were found on this Uta-Net page. It may be an instrumental track, or the page layout may have changed."
         : "No Japanese lyric lines were found. This post may not use the usual 日 / 羅 / 中 layout."
       : utaNet
         ? "Could not reach Uta-Net right now. The public proxy may be blocked or busy — please try again in a moment."

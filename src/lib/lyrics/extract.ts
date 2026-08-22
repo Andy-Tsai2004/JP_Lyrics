@@ -6,6 +6,26 @@ const KATAKANA = /[\u30A1-\u30FA]/;
 const METADATA =
   /作詞|作曲|編曲|歌唱|翻譯|翻好玩|Version|cv\.|CV[:：]|巴哈姆特|人氣|巴幣/;
 
+const UTANET_FURNITURE =
+  /^(?:Play\s+"|.*Amazon Music.*|購入$|シェア$|発売日：|この曲の表示回数：)/;
+
+/**
+ * Uta-Net hosts Japanese, English and mixed-language lyrics, so unlike the
+ * Bahamut extractor this does not require kana. We only drop the reader
+ * proxy's page furniture (play button, purchase/share rows, metadata) and
+ * markdown artifacts (links, images, headings) around the lyric block.
+ */
+function isUtaNetLyricLine(line: string): boolean {
+  const t = line.trim();
+  if (t.length < 2) return false;
+  if (METADATA.test(t) || UTANET_FURNITURE.test(t)) return false;
+  if (/^#{1,6}\s/.test(t)) return false;
+  if (/^\s*[*+-]\s+/.test(t)) return false;
+  if (/^!\[/.test(t)) return false;
+  if (/^\[[^\]]*\]\([^)]*\)$/.test(t)) return false;
+  return true;
+}
+
 export function isJapaneseLyricLine(line: string): boolean {
   const t = line.trim();
   if (t.length < 2) return false;
@@ -113,7 +133,7 @@ export function extractUtaNetLyricsFromMarkdown(
   const lines = block
     .split("\n")
     .map((raw) => raw.replace(/\u00a0/g, " ").trim())
-    .filter((line) => line && isJapaneseLyricLine(line));
+    .filter((line) => line && isUtaNetLyricLine(line));
   return { title, lines };
 }
 
