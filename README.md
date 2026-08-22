@@ -1,2 +1,4 @@
 # JP_Lyris
-1234
+#start
+npm install
+npm run dev
