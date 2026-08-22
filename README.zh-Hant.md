@@ -8,7 +8,7 @@ JP_Lyrics 是一個日文歌詞閱讀器，能從 Bahamut 的作品頁面與 Uta
 
 本專案已改為靜態網站，部署於 GitHub Pages：
 
-<https://Andy-Tsai2004.github.io/JP_Lyrics/>
+<https://luszechai.github.io/JP_Lyrics/>
 
 ## 本機開發
 
