@@ -2,6 +2,7 @@ import { Loader2, Music2 } from "lucide-react";
 import { useState } from "react";
 import type { RubyAssistMode } from "@/components/lyrics-display";
 import { SongHistorySidebar } from "@/components/song-history";
+import { SongPlayer } from "@/components/song-player";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { LyricsDisplay } from "@/components/lyrics-display";
@@ -176,6 +177,10 @@ export function LyricsApp() {
             </label>
           ) : null}
         </div>
+
+        {result ? (
+          <SongPlayer sourceUrl={result.sourceUrl} title={result.title} />
+        ) : null}
 
         {error ? (
           <div

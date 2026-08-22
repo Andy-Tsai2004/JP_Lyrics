@@ -61,7 +61,7 @@ function assertSupportedUrl(raw: string): URL {
   return url;
 }
 
-async function fetchWithTimeout(
+export async function fetchWithTimeout(
   input: string,
   init?: RequestInit,
   timeoutMs = MARKDOWN_TIMEOUT_MS,
