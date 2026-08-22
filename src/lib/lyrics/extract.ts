@@ -58,3 +58,25 @@ export function extractJapaneseLines(html: string): { title: string; lines: stri
   const lines = collected.filter(isJapaneseLyricLine);
   return { title, lines };
 }
+
+export function extractUtaNetLyrics(html: string): { title: string; lines: string[] } {
+  const $ = cheerio.load(html);
+  const songTitle =
+    $("h2.kashi-title").first().text().trim() ||
+    $('meta[property="og:title"]').first().attr("content")?.trim() ||
+    $("title").first().text().replace(/歌詞.*$/u, "").trim() ||
+    "Japanese lyrics";
+  const artist = $('h3[itemprop="recordedAs"]').first().text().trim();
+  const title = artist ? `${songTitle} - ${artist}` : songTitle;
+
+  const kashi = $("#kashi_area").first();
+  if (!kashi.length) {
+    return { title, lines: [] };
+  }
+  const raw = kashi.html() ?? "";
+  const lines = raw
+    .split(/<br\s*\/?>/i)
+    .map((chunk) => cheerio.load(chunk).text().replace(/\u00a0/g, " ").trim())
+    .filter(Boolean);
+  return { title, lines };
+}
