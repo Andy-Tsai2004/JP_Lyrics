@@ -1,4 +1,4 @@
-import { Loader2, Music2 } from "lucide-react";
+import { ExternalLink, Loader2, Music2, Search } from "lucide-react";
 import { useState } from "react";
 import type { RubyAssistMode } from "@/components/lyrics-display";
 import { SongHistorySidebar } from "@/components/song-history";
@@ -8,6 +8,11 @@ import { Input } from "@/components/ui/input";
 import { LyricsDisplay } from "@/components/lyrics-display";
 import { fetchLyrics } from "@/lib/lyrics/fetch";
 import { useSongHistory } from "@/lib/lyrics/history";
+import {
+  buildUtaNetSearchUrl,
+  searchUtaNet,
+  type UtaNetSearchResult,
+} from "@/lib/lyrics/search";
 import type { LyricsResult } from "@/lib/lyrics/types";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +20,13 @@ const BAHAMUT_SAMPLE_URL = "https://home.gamer.com.tw/artwork.php?sn=6306141";
 const UTANET_SAMPLE_URL = "https://www.uta-net.com/song/397348/";
 
 export function LyricsApp() {
+  const [mode, setMode] = useState<"search" | "paste">("search");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState<UtaNetSearchResult[] | null>(
+    null,
+  );
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [url, setUrl] = useState(UTANET_SAMPLE_URL);
   const [showFurigana, setShowFurigana] = useState(true);
   const [rubyAssistMode, setRubyAssistMode] = useState<RubyAssistMode>("hiragana");
@@ -40,6 +52,26 @@ export function LyricsApp() {
     }
   }
 
+  async function runSearch() {
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const results = await searchUtaNet(searchQuery);
+      setSearchResults(results);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not search Uta-Net.";
+      setSearchError(message.replace(/^Error:\s*/, ""));
+      setSearchResults(null);
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  function openSearchResult(result: UtaNetSearchResult) {
+    setUrl(result.songUrl);
+    void runFetch(result.songUrl);
+  }
+
   function openRecord(record: { sourceUrl: string }) {
     setUrl(record.sourceUrl);
     void runFetch(record.sourceUrl);
@@ -62,41 +94,186 @@ export function LyricsApp() {
             Japanese Lyrics Viewer
           </h1>
           <p className="max-w-xl text-sm leading-relaxed text-pretty text-muted">
-            Paste a Bahamut artwork or Uta-Net song link. The viewer keeps only the Japanese lines
-            and places ruby readings above the lyrics.
+            Search Uta-Net for a song, or paste a Bahamut artwork / Uta-Net song link. The viewer
+            keeps only the Japanese lines and places ruby readings above the lyrics.
           </p>
         </header>
 
-        <form
-          className="flex flex-col gap-3 rounded-2xl border border-border bg-surface p-3 sm:flex-row sm:items-center sm:p-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void runFetch(url);
-          }}
-        >
-          <label className="sr-only" htmlFor="lyrics-url">
-            Lyrics URL
-          </label>
-          <Input
-            id="lyrics-url"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://www.uta-net.com/song/… or https://home.gamer.com.tw/artwork.php?sn=…"
-            inputMode="url"
-            autoComplete="url"
-            className="border-0 bg-transparent shadow-none focus-visible:ring-0"
-          />
-          <Button type="submit" disabled={loading || !url.trim()} className="shrink-0">
-            {loading ? (
-              <>
-                <Loader2 className="size-4 animate-spin" />
-                Fetching
-              </>
-            ) : (
-              "Fetch lyrics"
-            )}
-          </Button>
-        </form>
+        <div className="rounded-2xl border border-border bg-surface p-3 sm:p-3">
+          <div
+            role="tablist"
+            aria-label="Load lyrics"
+            className="mb-2 flex gap-1 border-b border-border pb-2"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "search"}
+              onClick={() => setMode("search")}
+              className={cn(
+                "flex min-h-10 items-center gap-2 rounded-lg px-3 text-sm transition-colors",
+                mode === "search"
+                  ? "bg-surface-2 text-foreground"
+                  : "text-muted hover:text-foreground",
+              )}
+            >
+              <Search className="size-4" strokeWidth={1.75} />
+              Search Uta-Net
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "paste"}
+              onClick={() => setMode("paste")}
+              className={cn(
+                "flex min-h-10 items-center gap-2 rounded-lg px-3 text-sm transition-colors",
+                mode === "paste"
+                  ? "bg-surface-2 text-foreground"
+                  : "text-muted hover:text-foreground",
+              )}
+            >
+              Paste link
+            </button>
+          </div>
+
+          {mode === "search" ? (
+            <>
+              <form
+                className="flex flex-col gap-3 sm:flex-row sm:items-center"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void runSearch();
+                }}
+              >
+                <label className="sr-only" htmlFor="uta-search">
+                  Search Uta-Net
+                </label>
+                <Input
+                  id="uta-search"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Song title, e.g. 夜に駆ける"
+                  maxLength={100}
+                  className="border-0 bg-transparent shadow-none focus-visible:ring-0"
+                />
+                <Button
+                  type="submit"
+                  disabled={searching || !searchQuery.trim()}
+                  className="shrink-0"
+                >
+                  {searching ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" />
+                      Searching
+                    </>
+                  ) : (
+                    "Search"
+                  )}
+                </Button>
+              </form>
+
+              {searchError ? (
+                <div
+                  role="alert"
+                  className="mt-3 rounded-xl border border-danger/30 bg-danger-soft px-3 py-2.5 text-sm text-danger"
+                >
+                  {searchError}
+                </div>
+              ) : null}
+
+              {searchResults ? (
+                <div className="mt-3 border-t border-border pt-3">
+                  {searchResults.length === 0 ? (
+                    <p className="text-sm leading-relaxed text-muted">
+                      No songs found for “{searchQuery.trim()}” on Uta-Net.
+                    </p>
+                  ) : (
+                    <ul className="flex flex-col gap-2">
+                      {searchResults.map((result) => (
+                        <li
+                          key={result.songUrl}
+                          className="flex items-stretch rounded-xl border border-border bg-surface-2 transition-colors hover:border-foreground/20"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => openSearchResult(result)}
+                            className="flex min-w-0 flex-1 flex-col gap-1 rounded-l-xl px-3 py-2.5 text-left"
+                          >
+                            <span className="flex flex-wrap items-baseline gap-x-2">
+                              <span className="font-medium text-foreground">
+                                {result.title}
+                              </span>
+                              {result.artist ? (
+                                <span className="text-xs text-muted">
+                                  {result.artist}
+                                </span>
+                              ) : null}
+                            </span>
+                            {result.firstLine ? (
+                              <span className="truncate text-xs text-muted">
+                                {result.firstLine}
+                              </span>
+                            ) : null}
+                          </button>
+                          <a
+                            href={result.songUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label={`Open ${result.title} on Uta-Net`}
+                            className="flex shrink-0 items-center px-3 text-subtle hover:text-foreground"
+                          >
+                            <ExternalLink className="size-4" />
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  <a
+                    href={buildUtaNetSearchUrl(searchQuery.trim()).toString()}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-3 inline-flex min-h-9 items-center gap-1.5 text-xs text-muted underline-offset-4 hover:text-foreground hover:underline"
+                  >
+                    <ExternalLink className="size-3.5" strokeWidth={1.75} />
+                    View all results on Uta-Net
+                  </a>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <form
+              className="flex flex-col gap-3 sm:flex-row sm:items-center"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void runFetch(url);
+              }}
+            >
+              <label className="sr-only" htmlFor="lyrics-url">
+                Lyrics URL
+              </label>
+              <Input
+                id="lyrics-url"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://www.uta-net.com/song/… or https://home.gamer.com.tw/artwork.php?sn=…"
+                inputMode="url"
+                autoComplete="url"
+                className="border-0 bg-transparent shadow-none focus-visible:ring-0"
+              />
+              <Button type="submit" disabled={loading || !url.trim()} className="shrink-0">
+                {loading ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Fetching
+                  </>
+                ) : (
+                  "Fetch lyrics"
+                )}
+              </Button>
+            </form>
+          )}
+        </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-4">

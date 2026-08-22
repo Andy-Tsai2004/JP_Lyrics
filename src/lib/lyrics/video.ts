@@ -1,4 +1,4 @@
-import { fetchWithTimeout } from "./fetch";
+import { fetchWithTimeout } from "./proxy.ts";
 
 const UTANET_SONG_PATH = /^\/song\/(\d+)/;
 const VIDEO_FETCH_TIMEOUT_MS = 15_000;

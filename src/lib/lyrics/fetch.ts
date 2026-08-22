@@ -5,23 +5,11 @@ import {
   extractUtaNetLyricsFromMarkdown,
 } from "./extract";
 import { addFurigana } from "./furigana";
+import { fetchMarkdown, fetchRawHtml } from "./proxy";
 import type { LyricsResult } from "./types";
 
 const BAHAMUT_HOST = /(^|\.)gamer\.com\.tw$/i;
 const UTANET_HOST = /(^|\.)uta-net\.com$/i;
-
-// r.jina.ai is the fastest of the public proxies in practice (sub-second),
-// while the raw-HTML proxies (allorigins / codetabs) are slow and flaky, so
-// they only act as a fallback with a shorter timeout.
-const MARKDOWN_TIMEOUT_MS = 15_000;
-const RAW_HTML_TIMEOUT_MS = 10_000;
-
-const RAW_HTML_PROXIES = [
-  (url: URL) =>
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(url.toString())}`,
-  (url: URL) =>
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url.toString())}`,
-];
 
 const CACHE_PREFIX = "jplyrics:cache:";
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // keep lyrics for a week
@@ -59,54 +47,6 @@ function assertSupportedUrl(raw: string): URL {
     );
   }
   return url;
-}
-
-export async function fetchWithTimeout(
-  input: string,
-  init?: RequestInit,
-  timeoutMs = MARKDOWN_TIMEOUT_MS,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(input, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
- * GitHub Pages is static-only, so lyric pages are fetched in the browser
- * through public CORS proxies. The fast reader proxy (r.jina.ai) returns
- * markdown that the markdown extractors know how to parse; raw-HTML proxies
- * (allorigins / codetabs) are kept as a fallback for the DOM extractors.
- */
-async function fetchRawHtml(url: URL): Promise<string | null> {
-  for (const makeUrl of RAW_HTML_PROXIES) {
-    try {
-      const res = await fetchWithTimeout(makeUrl(url), undefined, RAW_HTML_TIMEOUT_MS);
-      if (res.ok) {
-        const text = await res.text();
-        if (text && !text.trim().startsWith("{")) return text;
-      }
-    } catch {
-      // transient proxy failure — try the next one
-    }
-  }
-  return null;
-}
-
-async function fetchMarkdown(url: URL): Promise<string | null> {
-  try {
-    const res = await fetchWithTimeout(`https://r.jina.ai/${url.toString()}`);
-    if (res.ok) {
-      const text = await res.text();
-      if (text.includes("Markdown Content:")) return text;
-    }
-  } catch {
-    // transient network failure — the HTML fallback will run
-  }
-  return null;
 }
 
 function cacheKey(url: URL): string {

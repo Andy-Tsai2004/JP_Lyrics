@@ -1,8 +1,8 @@
 # JP_Lyrics
 
-JP_Lyrics 是一個日文歌詞閱讀器，能從 Bahamut 的作品頁面與 Uta-Net 的歌詞頁面
-抓取歌詞，將內容整理為純日文歌詞，並在漢字上方加入 ruby 風格的振り仮名，
-也可切換平假名或羅馬拼音輔助、調整字體大小。
+JP_Lyrics 是一個日文歌詞閱讀器，可直接在 Uta-Net 搜尋歌曲，或貼上 Bahamut 的
+作品頁面與 Uta-Net 的歌詞頁面網址，將內容整理為純日文歌詞，並在漢字上方加入
+ruby 風格的振り仮名，也可切換平假名或羅馬拼音輔助、調整字體大小。
 
 ## 線上版本
 
@@ -47,9 +47,9 @@ npm run preview:pages  # 在本機預覽建置結果（http://127.0.0.1:8081/JP_
 ### 關於歌詞抓取
 
 GitHub Pages 只能託管靜態檔案，因此應用程式會在瀏覽器端透過公開的 CORS 代理
-抓取歌詞頁面（先試 r.jina.ai 的 Markdown，allorigins / codetabs 抓原始 HTML
-作為備援）。抓到的歌詞會快取在 `localStorage` 一週，重複開啟同一首歌時會
-立即顯示。
+抓取 Uta-Net 的搜尋結果與歌詞頁面（先試 r.jina.ai 的 Markdown，allorigins /
+codetabs 抓原始 HTML 作為備援）。抓到的歌詞會快取在 `localStorage` 一週，
+重複開啟同一首歌時會立即顯示。
 
 ## 可用指令
 
