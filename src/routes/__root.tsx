@@ -14,7 +14,7 @@ export const Route = createRootRoute({
       {
         name: "description",
         content:
-          "Fetch Japanese lyrics from Bahamut posts and display furigana over kanji.",
+          "Fetch Japanese lyrics from Bahamut posts and Uta-Net song pages, then display furigana over kanji.",
       },
       { name: "theme-color", content: "#0c0d12" },
     ],

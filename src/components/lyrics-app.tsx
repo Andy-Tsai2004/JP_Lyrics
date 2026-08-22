@@ -5,15 +5,16 @@ import type { RubyAssistMode } from "@/components/lyrics-display";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { LyricsDisplay } from "@/components/lyrics-display";
-import { fetchBahamutLyrics } from "@/lib/lyrics/fetch";
+import { fetchLyrics as fetchLyricsFn } from "@/lib/lyrics/fetch";
 import type { LyricsResult } from "@/lib/lyrics/types";
 import { cn } from "@/lib/utils";
 
-const SAMPLE_URL = "https://home.gamer.com.tw/artwork.php?sn=6306141";
+const BAHAMUT_SAMPLE_URL = "https://home.gamer.com.tw/artwork.php?sn=6306141";
+const UTANET_SAMPLE_URL = "https://www.uta-net.com/song/397348/";
 
 export function LyricsApp() {
-  const fetchLyrics = useServerFn(fetchBahamutLyrics);
-  const [url, setUrl] = useState(SAMPLE_URL);
+  const fetchLyrics = useServerFn(fetchLyricsFn);
+  const [url, setUrl] = useState(UTANET_SAMPLE_URL);
   const [showFurigana, setShowFurigana] = useState(true);
   const [rubyAssistMode, setRubyAssistMode] = useState<RubyAssistMode>("hiragana");
   const [fontSizeRem, setFontSizeRem] = useState(1.35);
@@ -46,8 +47,8 @@ export function LyricsApp() {
           Japanese Lyrics Viewer
         </h1>
         <p className="max-w-xl text-sm leading-relaxed text-pretty text-muted">
-          Paste a Bahamut artwork link. The viewer keeps only the Japanese lines
-          and places ruby readings above the lyrics.
+          Paste a Bahamut artwork or Uta-Net song link. The viewer keeps only the
+          Japanese lines and places ruby readings above the lyrics.
         </p>
       </header>
 
@@ -58,14 +59,14 @@ export function LyricsApp() {
           void runFetch(url);
         }}
       >
-        <label className="sr-only" htmlFor="bahamut-url">
-          Bahamut lyrics URL
+        <label className="sr-only" htmlFor="lyrics-url">
+          Lyrics URL
         </label>
         <Input
-          id="bahamut-url"
+          id="lyrics-url"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://home.gamer.com.tw/artwork.php?sn=…"
+          placeholder="https://www.uta-net.com/song/… or https://home.gamer.com.tw/artwork.php?sn=…"
           inputMode="url"
           autoComplete="url"
           className="border-0 bg-transparent shadow-none focus-visible:ring-0"
@@ -83,17 +84,30 @@ export function LyricsApp() {
       </form>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <button
-          type="button"
-          className="min-h-11 text-sm text-muted underline-offset-4 hover:text-foreground hover:underline"
-          onClick={() => {
-            setUrl(SAMPLE_URL);
-            void runFetch(SAMPLE_URL);
-          }}
-          disabled={loading}
-        >
-          Try the sample post
-        </button>
+        <div className="flex flex-wrap items-center gap-4">
+          <button
+            type="button"
+            className="min-h-11 text-sm text-muted underline-offset-4 hover:text-foreground hover:underline"
+            onClick={() => {
+              setUrl(UTANET_SAMPLE_URL);
+              void runFetch(UTANET_SAMPLE_URL);
+            }}
+            disabled={loading}
+          >
+            Try Uta-Net sample
+          </button>
+          <button
+            type="button"
+            className="min-h-11 text-sm text-muted underline-offset-4 hover:text-foreground hover:underline"
+            onClick={() => {
+              setUrl(BAHAMUT_SAMPLE_URL);
+              void runFetch(BAHAMUT_SAMPLE_URL);
+            }}
+            disabled={loading}
+          >
+            Try Bahamut sample
+          </button>
+        </div>
 
         <label className="flex min-h-11 items-center gap-3 text-sm text-foreground">
           Lyrics size
@@ -163,7 +177,7 @@ export function LyricsApp() {
       <section className="min-h-72 rounded-[28px] border border-border bg-paper px-5 py-8 sm:px-10 sm:py-12">
         {loading ? (
           <div className="space-y-5" aria-busy="true" aria-live="polite">
-            <p className="text-sm text-muted">Reading the post and adding readings…</p>
+            <p className="text-sm text-muted">Reading the page and adding readings…</p>
             {["w-5/6", "w-2/3", "w-4/5", "w-3/5", "w-3/4", "w-2/3", "w-5/6", "w-1/2"].map(
               (width, i) => (
                 <div key={i} className={cn("h-5 animate-pulse rounded-md bg-surface-2", width)} />
