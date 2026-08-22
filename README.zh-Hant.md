@@ -47,8 +47,9 @@ npm run preview:pages  # 在本機預覽建置結果（http://127.0.0.1:8081/JP_
 ### 關於歌詞抓取
 
 GitHub Pages 只能託管靜態檔案，因此應用程式會在瀏覽器端透過公開的 CORS 代理
-抓取歌詞頁面（allorigins 抓原始 HTML，r.jina.ai 作為 Markdown 備援）。這可能比
-伺服器端抓取稍慢或不穩定，通常重試即可成功。
+抓取歌詞頁面（先試 r.jina.ai 的 Markdown，allorigins / codetabs 抓原始 HTML
+作為備援）。抓到的歌詞會快取在 `localStorage` 一週，重複開啟同一首歌時會
+立即顯示。
 
 ## 可用指令
 
