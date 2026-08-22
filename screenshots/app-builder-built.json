@@ -1,0 +1,38 @@
+{
+  "url": "http://127.0.0.1:8081/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "Japanese Lyrics Viewer",
+      "hasCanvas": false,
+      "bodyTextLen": 292,
+      "bodyTextHash": "c16e61085e3811c809980209a33dbfb4a16b65ccab63e87f4086e49af47eab02",
+      "bodyTextPrefix": "歌詞ビューア Japanese Lyrics Viewer Paste a Bahamut artwork link. The ",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-built.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "Japanese Lyrics Viewer",
+      "hasCanvas": false,
+      "bodyTextLen": 292,
+      "bodyTextHash": "c16e61085e3811c809980209a33dbfb4a16b65ccab63e87f4086e49af47eab02",
+      "bodyTextPrefix": "歌詞ビューア Japanese Lyrics Viewer Paste a Bahamut artwork link. The ",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-built-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-built.json",
+  "divergesFromBaseline": false,
+  "baselineReasons": []
+}

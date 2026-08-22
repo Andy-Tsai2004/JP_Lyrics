@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0c0d12;
+  --color-surface: #16171f;
+  --color-surface-2: #1e1f28;
+  --color-paper: #14151c;
+  --color-foreground: #ece8e1;
+  --color-muted: #9a958c;
+  --color-subtle: #6f6b64;
+  --color-primary: #c5cdd6;
+  --color-primary-foreground: #0c0d12;
+  --color-border: color-mix(in oklab, var(--color-foreground) 12%, transparent);
+  --color-ring: #c5cdd6;
+  --color-danger: #d98980;
+  --color-danger-soft: color-mix(in oklab, var(--color-danger) 12%, transparent);
+  --radius-lg: 0.75rem;
+  --font-sans: "Noto Sans JP", "Segoe UI", system-ui, sans-serif;
+  --font-serif: "Noto Serif JP", "Iowan Old Style", serif;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    background: var(--color-bg);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    min-height: 100dvh;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+}
+
+.ruby-token {
+  ruby-position: over;
+  ruby-align: center;
+}
+
+.ruby-token rt {
+  font-family: var(--font-sans);
+  font-size: 0.48em;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--color-muted);
+  letter-spacing: 0.02em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
