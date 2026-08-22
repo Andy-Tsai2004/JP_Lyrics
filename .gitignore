@@ -4,6 +4,7 @@ node_modules/
 .tanstack/
 dist/
 coverage/
+public/kuromoji-dict/
 
 .env
 .env.*

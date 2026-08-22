@@ -1,11 +1,10 @@
-import { useServerFn } from "@tanstack/react-start";
 import { Loader2, Music2 } from "lucide-react";
 import { useState } from "react";
 import type { RubyAssistMode } from "@/components/lyrics-display";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { LyricsDisplay } from "@/components/lyrics-display";
-import { fetchLyrics as fetchLyricsFn } from "@/lib/lyrics/fetch";
+import { fetchLyrics } from "@/lib/lyrics/fetch";
 import type { LyricsResult } from "@/lib/lyrics/types";
 import { cn } from "@/lib/utils";
 
@@ -13,7 +12,6 @@ const BAHAMUT_SAMPLE_URL = "https://home.gamer.com.tw/artwork.php?sn=6306141";
 const UTANET_SAMPLE_URL = "https://www.uta-net.com/song/397348/";
 
 export function LyricsApp() {
-  const fetchLyrics = useServerFn(fetchLyricsFn);
   const [url, setUrl] = useState(UTANET_SAMPLE_URL);
   const [showFurigana, setShowFurigana] = useState(true);
   const [rubyAssistMode, setRubyAssistMode] = useState<RubyAssistMode>("hiragana");
@@ -26,7 +24,7 @@ export function LyricsApp() {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchLyrics({ data: { url: target } });
+      const data = await fetchLyrics(target);
       setResult(data);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Could not fetch lyrics.";

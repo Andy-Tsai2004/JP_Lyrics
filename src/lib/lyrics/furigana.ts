@@ -1,17 +1,10 @@
-import { existsSync } from "node:fs";
-import { createRequire } from "node:module";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import Kuroshiro from "kuroshiro";
 import KuromojiAnalyzer from "kuroshiro-analyzer-kuromoji";
 import type { LyricLine, RubyToken } from "./types";
 
 type KuroshiroLike = {
   init: (analyzer: unknown) => Promise<void>;
-  convert: (
-    str: string,
-    opts: { to: string; mode: string },
-  ) => Promise<string>;
+  convert: (str: string, opts: { to: string; mode: string }) => Promise<string>;
 };
 
 let converter: KuroshiroLike | null = null;
@@ -21,38 +14,24 @@ function ctor<T>(mod: T | { default: T }): T {
   return (mod as { default?: T }).default ?? (mod as T);
 }
 
-function resolveDictPath(): string {
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  const require = createRequire(import.meta.url);
-  const candidates = [
-    path.join(path.dirname(require.resolve("kuromoji/package.json")), "dict"),
-    path.join(process.cwd(), "node_modules/kuromoji/dict"),
-    path.join(process.cwd(), "kuromoji-dict"),
-    path.join(process.cwd(), "server/kuromoji-dict"),
-    path.join(here, "../../../server/kuromoji-dict"),
-    path.join(here, "kuromoji-dict"),
-  ];
-  for (const dir of candidates) {
-    try {
-      if (existsSync(path.join(dir, "base.dat.gz"))) return dir;
-    } catch {
-      // ignore
-    }
-  }
-  throw new Error("Japanese dictionary files were not found on the server.");
-}
+/**
+ * The kuromoji dictionary files are copied into `public/kuromoji-dict/`
+ * before dev/build (see `scripts/copy-kuromoji-dict.mjs`) and resolved
+ * relative to the app base path, so this works both locally and on GitHub
+ * Pages (`/<repo>/kuromoji-dict/…`).
+ */
+const DICT_PATH = `${import.meta.env.BASE_URL}kuromoji-dict`;
 
 async function getConverter(): Promise<KuroshiroLike> {
   if (converter) return converter;
   if (!initPromise) {
     initPromise = (async () => {
-      const dictPath = resolveDictPath();
       const KS = ctor(Kuroshiro) as unknown as new () => KuroshiroLike;
       const Analyzer = ctor(KuromojiAnalyzer) as unknown as new (opts: {
         dictPath: string;
       }) => unknown;
       const instance = new KS();
-      await instance.init(new Analyzer({ dictPath }));
+      await instance.init(new Analyzer({ dictPath: DICT_PATH }));
       converter = instance;
       return instance;
     })();

@@ -4,18 +4,15 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const src = join(root, "node_modules/kuromoji/dict");
-const dests = [
-  join(root, "server/kuromoji-dict"),
-  join(root, ".vercel/output/functions/__server.func/kuromoji-dict"),
-];
+const dest = join(root, "public/kuromoji-dict");
 
 if (!existsSync(src)) {
   console.warn("[kuromoji-dict] source missing, skip");
   process.exit(0);
 }
 
-for (const dest of dests) {
-  mkdirSync(dirname(dest), { recursive: true });
-  cpSync(src, dest, { recursive: true });
-  console.log("[kuromoji-dict] copied to", dest);
-}
+// Copied before `vite build` / `vite dev` so the dictionary files are served
+// from `/kuromoji-dict/` (or `/<repo>/kuromoji-dict/` on GitHub Pages).
+mkdirSync(dirname(dest), { recursive: true });
+cpSync(src, dest, { recursive: true });
+console.log("[kuromoji-dict] copied to", dest);

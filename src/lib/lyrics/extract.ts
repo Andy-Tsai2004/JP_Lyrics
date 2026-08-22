@@ -80,3 +80,56 @@ export function extractUtaNetLyrics(html: string): { title: string; lines: strin
     .filter(Boolean);
   return { title, lines };
 }
+
+/**
+ * Markdown fallbacks. When the static site cannot get the raw HTML through a
+ * CORS proxy, the reader proxy (r.jina.ai) returns a markdown rendering of the
+ * page; these extractors know the structure of that markdown.
+ */
+
+const MARKDOWN_HR = /^\s*(?:\* \* \*|\*\*\*|---)\s*$/m;
+
+function utaNetMarkdownTitle(markdown: string): string {
+  const song = markdown.match(/^##\s+(.+)$/m)?.[1]?.trim();
+  const artist = markdown.match(/^###\s+\[([^\]]+)\]\(/m)?.[1]?.trim();
+  if (song && artist) return `${song} - ${artist}`;
+  const heading = markdown.match(/^#\s+(.+)$/m)?.[1]?.replace(/\s*歌詞\s*$/, "").trim();
+  return heading || song || "Japanese lyrics";
+}
+
+export function extractUtaNetLyricsFromMarkdown(
+  markdown: string,
+): { title: string; lines: string[] } {
+  const title = utaNetMarkdownTitle(markdown);
+  const body = markdown
+    .replace(/^Title:.*$/m, "")
+    .replace(/^URL Source:.*$/m, "");
+  const startMatch = body.match(/^Play ".*$/m);
+  const start = startMatch ? (startMatch.index ?? 0) : 0;
+  const slice = body.slice(start);
+  const endMatch = slice.match(/^\[この歌詞をマイ歌ネットに登録>\]/m);
+  const end = endMatch ? (endMatch.index ?? slice.length) : slice.length;
+  const block = slice.slice(0, end);
+  const lines = block
+    .split("\n")
+    .map((raw) => raw.replace(/\u00a0/g, " ").trim())
+    .filter((line) => line && isJapaneseLyricLine(line));
+  return { title, lines };
+}
+
+export function extractJapaneseLinesFromMarkdown(
+  markdown: string,
+): { title: string; lines: string[] } {
+  const title =
+    markdown.match(/^#\s+(.+)$/m)?.[1]?.trim() || "Japanese lyrics";
+  const segments = markdown.split(MARKDOWN_HR);
+  let best: string[] = [];
+  for (const segment of segments) {
+    const lines = segment
+      .split("\n")
+      .map((raw) => raw.replace(/\u00a0/g, " ").trim())
+      .filter((line) => line && isJapaneseLyricLine(line));
+    if (lines.length > best.length) best = lines;
+  }
+  return { title, lines: best };
+}
