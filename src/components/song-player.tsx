@@ -1,5 +1,6 @@
 import { Loader2, Pause, Play } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import type { Ref } from "react";
 import { Button } from "@/components/ui/button";
 import { resolveVideoId, youtubeSearchUrl } from "@/lib/lyrics/video";
 
@@ -13,6 +14,15 @@ type PlayerStatus =
   | "paused"
   | "ended"
   | "error";
+
+export type SongPlayerHandle = {
+  /**
+   * Seek to an absolute position in seconds. With a loaded player it also
+   * resumes playback; before the player exists it only remembers the
+   * position, which is applied when the user presses Play.
+   */
+  seekTo: (seconds: number) => void;
+};
 
 type YTPlayer = {
   playVideo: () => void;
@@ -74,14 +84,31 @@ function formatTime(seconds: number): string {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
-export function SongPlayer({ sourceUrl, title }: { sourceUrl: string; title: string }) {
+export function SongPlayer({
+  sourceUrl,
+  title,
+  onTimeChange,
+  ref,
+}: {
+  sourceUrl: string;
+  title: string;
+  /** Reports the current playback position in seconds as it changes. */
+  onTimeChange?: (seconds: number) => void;
+  ref?: Ref<SongPlayerHandle>;
+}) {
   const playerRef = useRef<YTPlayer | null>(null);
   const sourceRef = useRef(sourceUrl);
   const tickTimer = useRef<number | null>(null);
+  const pendingSeekRef = useRef<number | null>(null);
+  const onTimeChangeRef = useRef(onTimeChange);
   const [status, setStatus] = useState<PlayerStatus>("idle");
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    onTimeChangeRef.current = onTimeChange;
+  }, [onTimeChange]);
 
   const stopTick = useCallback(() => {
     if (tickTimer.current !== null) {
@@ -95,7 +122,9 @@ export function SongPlayer({ sourceUrl, title }: { sourceUrl: string; title: str
     tickTimer.current = window.setInterval(() => {
       const player = playerRef.current;
       if (!player) return;
-      setCurrent(player.getCurrentTime() || 0);
+      const time = player.getCurrentTime() || 0;
+      setCurrent(time);
+      onTimeChangeRef.current?.(time);
       const total = player.getDuration();
       if (total > 0) setDuration(total);
     }, 250);
@@ -105,6 +134,7 @@ export function SongPlayer({ sourceUrl, title }: { sourceUrl: string; title: str
     stopTick();
     playerRef.current?.destroy();
     playerRef.current = null;
+    pendingSeekRef.current = null;
     setStatus("idle");
     setCurrent(0);
     setDuration(0);
@@ -158,6 +188,10 @@ export function SongPlayer({ sourceUrl, title }: { sourceUrl: string; title: str
           onReady: (event) => {
             playerRef.current = event.target;
             event.target.playVideo();
+            if (pendingSeekRef.current != null) {
+              event.target.seekTo(pendingSeekRef.current, true);
+              pendingSeekRef.current = null;
+            }
           },
           onStateChange: (event) => {
             switch (event.data) {
@@ -173,6 +207,7 @@ export function SongPlayer({ sourceUrl, title }: { sourceUrl: string; title: str
                 setStatus("ended");
                 stopTick();
                 setCurrent(0);
+                onTimeChangeRef.current?.(0);
                 break;
             }
           },
@@ -196,8 +231,31 @@ export function SongPlayer({ sourceUrl, title }: { sourceUrl: string; title: str
 
   function handleSeek(value: number) {
     setCurrent(value);
+    onTimeChangeRef.current?.(value);
     playerRef.current?.seekTo(value, true);
   }
+
+  // Expose an external seek so lyric lines can jump the song back to a line's
+  // start time. Before the user has pressed Play, only the position is
+  // remembered — starting the whole YouTube load just because a lyric line
+  // was clicked would leave the player stuck on "loading" if the network is
+  // slow, so playback is left to the Play button.
+  useImperativeHandle(
+    ref,
+    () => ({
+      seekTo: (seconds) => {
+        pendingSeekRef.current = seconds;
+        setCurrent(seconds);
+        onTimeChangeRef.current?.(seconds);
+        const player = playerRef.current;
+        if (player) {
+          player.seekTo(seconds, true);
+          if (status !== "playing") player.playVideo();
+        }
+      },
+    }),
+    [status],
+  );
 
   const isBusy = status === "resolving" || status === "loading";
   const isPlaying = status === "playing";

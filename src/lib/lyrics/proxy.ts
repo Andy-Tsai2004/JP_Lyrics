@@ -31,6 +31,22 @@ export async function fetchWithTimeout(
 }
 
 export async function fetchRawHtml(url: URL): Promise<string | null> {
+  // r.jina.ai's HTML mode returns the full page and is fast. Its markdown
+  // mode can silently drop parts of a page (e.g. the first, popularity-sorted
+  // table of Uta-Net search results), so prefer the raw HTML when available.
+  try {
+    const res = await fetchWithTimeout(
+      `https://r.jina.ai/${url.toString()}`,
+      { headers: { "X-Return-Format": "html" } },
+      MARKDOWN_TIMEOUT_MS,
+    );
+    if (res.ok) {
+      const text = await res.text();
+      if (text && !text.trim().startsWith("{")) return text;
+    }
+  } catch {
+    // transient failure — fall through to the raw-HTML proxies
+  }
   for (const makeUrl of RAW_HTML_PROXIES) {
     try {
       const res = await fetchWithTimeout(makeUrl(url), undefined, RAW_HTML_TIMEOUT_MS);
