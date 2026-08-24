@@ -1,62 +1,24 @@
-import { createServerFn } from "@tanstack/react-start";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { z } from "zod";
-import { extractJapaneseLines, extractUtaNetLyrics } from "./extract";
+import {
+  extractJapaneseLines,
+  extractJapaneseLinesFromMarkdown,
+  extractUtaNetLyrics,
+  extractUtaNetLyricsFromMarkdown,
+} from "./extract";
 import { addFurigana } from "./furigana";
+import { fetchMarkdown, fetchRawHtml } from "./proxy";
 import type { LyricsResult } from "./types";
 
 const BAHAMUT_HOST = /(^|\.)gamer\.com\.tw$/i;
 const UTANET_HOST = /(^|\.)uta-net\.com$/i;
-const execFileAsync = promisify(execFile);
 
-const REQUEST_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-  "Accept-Language": "ja,zh-TW,en;q=0.8",
-} as const;
+const CACHE_PREFIX = "jplyrics:cache:";
+const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // keep lyrics for a week
 
-async function fetchWithCurl(url: URL): Promise<string> {
-  const args = [
-    "-sSL",
-    "--compressed",
-    "--max-time",
-    "20",
-    ...Object.entries(REQUEST_HEADERS).flatMap(([key, value]) => ["-H", `${key}: ${value}`]),
-    "-w",
-    "\n%{http_code}",
-    url.toString(),
-  ];
-  const candidates = ["curl", "curl.exe", "/usr/bin/curl", "/usr/local/bin/curl"];
-  let lastError: unknown = null;
-  for (const bin of candidates) {
-    try {
-      const { stdout } = await execFileAsync(bin, args, {
-        maxBuffer: 8 * 1024 * 1024,
-        windowsHide: true,
-      });
-      const match = stdout.match(/\n(\d{3})\s*$/);
-      const httpCode = match ? Number(match[1]) : 200;
-      const html = match ? stdout.slice(0, match.index) : stdout;
-      if (httpCode >= 400) {
-        throw new Error(`The lyric page returned ${httpCode}. Try again in a moment.`);
-      }
-      return html;
-    } catch (err) {
-      const code = (err as { code?: string }).code;
-      if (code === "ENOENT") {
-        lastError = err;
-        continue;
-      }
-      throw err;
-    }
-  }
-  throw (
-    lastError ??
-    new Error("The lyric site blocked the request (403). Please try again in a moment.")
-  );
-}
+type CacheEntry = {
+  title: string;
+  lines: LyricsResult["lines"];
+  fetchedAt: number;
+};
 
 function isBahamutUrl(url: URL): boolean {
   return (
@@ -87,37 +49,103 @@ function assertSupportedUrl(raw: string): URL {
   return url;
 }
 
-export const fetchLyrics = createServerFn({ method: "POST" })
-  .validator(z.object({ url: z.string().min(8) }))
-  .handler(async ({ data }): Promise<LyricsResult> => {
-    const url = assertSupportedUrl(data.url);
-    const response = await fetch(url.toString(), {
-      headers: REQUEST_HEADERS,
-      redirect: "follow",
-    });
-    const blockedStatus = response.status === 403 || response.status === 429 || response.status === 503;
-    if (!response.ok && !(blockedStatus && isUtaNetUrl(url))) {
-      throw new Error(`The lyric page returned ${response.status}. Try again in a moment.`);
+function cacheKey(url: URL): string {
+  return `${CACHE_PREFIX}${url.toString()}`;
+}
+
+function readCache(url: URL): LyricsResult | null {
+  try {
+    const raw = localStorage.getItem(cacheKey(url));
+    if (!raw) return null;
+    const entry = JSON.parse(raw) as CacheEntry;
+    if (
+      !entry ||
+      typeof entry.title !== "string" ||
+      !Array.isArray(entry.lines) ||
+      typeof entry.fetchedAt !== "number"
+    ) {
+      return null;
     }
-    const html =
-      blockedStatus && isUtaNetUrl(url)
-        ? await fetchWithCurl(url)
-        : await response.text();
-    const utaNet = isUtaNetUrl(url);
+    if (Date.now() - entry.fetchedAt > CACHE_TTL_MS) {
+      localStorage.removeItem(cacheKey(url));
+      return null;
+    }
+    return {
+      sourceUrl: url.toString(),
+      title: entry.title,
+      lines: entry.lines,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(url: URL, result: LyricsResult): void {
+  try {
+    const entry: CacheEntry = {
+      title: result.title,
+      lines: result.lines,
+      fetchedAt: Date.now(),
+    };
+    localStorage.setItem(cacheKey(url), JSON.stringify(entry));
+  } catch {
+    // storage unavailable / full — caching is best-effort
+  }
+}
+
+export async function fetchLyrics(target: string): Promise<LyricsResult> {
+  const url = assertSupportedUrl(target);
+  const utaNet = isUtaNetUrl(url);
+
+  const cached = readCache(url);
+  if (cached) return cached;
+
+  let fetchedAny = false;
+
+  const markdown = await fetchMarkdown(url);
+  if (markdown) {
+    fetchedAny = true;
+    const { title, lines } = utaNet
+      ? extractUtaNetLyricsFromMarkdown(markdown)
+      : extractJapaneseLinesFromMarkdown(markdown);
+    if (lines.length > 0) {
+      return complete(url, title, lines);
+    }
+  }
+
+  const html = await fetchRawHtml(url);
+  if (html) {
+    fetchedAny = true;
     const { title, lines } = utaNet
       ? extractUtaNetLyrics(html)
       : extractJapaneseLines(html);
-    if (lines.length === 0) {
-      throw new Error(
-        utaNet
-          ? "No lyric lines were found on this Uta-Net page."
-          : "No Japanese lyric lines were found. This post may not use the usual 日 / 羅 / 中 layout.",
-      );
+    if (lines.length > 0) {
+      return complete(url, title, lines);
     }
-    const withRuby = await addFurigana(lines);
-    return {
-      sourceUrl: url.toString(),
-      title,
-      lines: withRuby,
-    };
-  });
+  }
+
+  throw new Error(
+    fetchedAny
+      ? utaNet
+        ? "No lyric lines were found on this Uta-Net page. It may be an instrumental track, or the page layout may have changed."
+        : "No Japanese lyric lines were found. This post may not use the usual 日 / 羅 / 中 layout."
+      : utaNet
+        ? "Could not reach Uta-Net right now. The public proxy may be blocked or busy — please try again in a moment."
+        : "Could not reach Bahamut right now. The public proxy may be blocked or busy — please try again in a moment.",
+  );
+}
+
+async function complete(
+  url: URL,
+  title: string,
+  lines: string[],
+): Promise<LyricsResult> {
+  const withRuby = await addFurigana(lines);
+  const result: LyricsResult = {
+    sourceUrl: url.toString(),
+    title,
+    lines: withRuby,
+  };
+  writeCache(url, result);
+  return result;
+}

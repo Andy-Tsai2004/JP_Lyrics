@@ -6,6 +6,26 @@ const KATAKANA = /[\u30A1-\u30FA]/;
 const METADATA =
   /作詞|作曲|編曲|歌唱|翻譯|翻好玩|Version|cv\.|CV[:：]|巴哈姆特|人氣|巴幣/;
 
+const UTANET_FURNITURE =
+  /^(?:Play\s+"|.*Amazon Music.*|購入$|シェア$|発売日：|この曲の表示回数：)/;
+
+/**
+ * Uta-Net hosts Japanese, English and mixed-language lyrics, so unlike the
+ * Bahamut extractor this does not require kana. We only drop the reader
+ * proxy's page furniture (play button, purchase/share rows, metadata) and
+ * markdown artifacts (links, images, headings) around the lyric block.
+ */
+function isUtaNetLyricLine(line: string): boolean {
+  const t = line.trim();
+  if (t.length < 2) return false;
+  if (METADATA.test(t) || UTANET_FURNITURE.test(t)) return false;
+  if (/^#{1,6}\s/.test(t)) return false;
+  if (/^\s*[*+-]\s+/.test(t)) return false;
+  if (/^!\[/.test(t)) return false;
+  if (/^\[[^\]]*\]\([^)]*\)$/.test(t)) return false;
+  return true;
+}
+
 export function isJapaneseLyricLine(line: string): boolean {
   const t = line.trim();
   if (t.length < 2) return false;
@@ -79,4 +99,57 @@ export function extractUtaNetLyrics(html: string): { title: string; lines: strin
     .map((chunk) => cheerio.load(chunk).text().replace(/\u00a0/g, " ").trim())
     .filter(Boolean);
   return { title, lines };
+}
+
+/**
+ * Markdown fallbacks. When the static site cannot get the raw HTML through a
+ * CORS proxy, the reader proxy (r.jina.ai) returns a markdown rendering of the
+ * page; these extractors know the structure of that markdown.
+ */
+
+const MARKDOWN_HR = /^\s*(?:\* \* \*|\*\*\*|---)\s*$/m;
+
+function utaNetMarkdownTitle(markdown: string): string {
+  const song = markdown.match(/^##\s+(.+)$/m)?.[1]?.trim();
+  const artist = markdown.match(/^###\s+\[([^\]]+)\]\(/m)?.[1]?.trim();
+  if (song && artist) return `${song} - ${artist}`;
+  const heading = markdown.match(/^#\s+(.+)$/m)?.[1]?.replace(/\s*歌詞\s*$/, "").trim();
+  return heading || song || "Japanese lyrics";
+}
+
+export function extractUtaNetLyricsFromMarkdown(
+  markdown: string,
+): { title: string; lines: string[] } {
+  const title = utaNetMarkdownTitle(markdown);
+  const body = markdown
+    .replace(/^Title:.*$/m, "")
+    .replace(/^URL Source:.*$/m, "");
+  const startMatch = body.match(/^Play ".*$/m);
+  const start = startMatch ? (startMatch.index ?? 0) : 0;
+  const slice = body.slice(start);
+  const endMatch = slice.match(/^\[この歌詞をマイ歌ネットに登録>\]/m);
+  const end = endMatch ? (endMatch.index ?? slice.length) : slice.length;
+  const block = slice.slice(0, end);
+  const lines = block
+    .split("\n")
+    .map((raw) => raw.replace(/\u00a0/g, " ").trim())
+    .filter((line) => line && isUtaNetLyricLine(line));
+  return { title, lines };
+}
+
+export function extractJapaneseLinesFromMarkdown(
+  markdown: string,
+): { title: string; lines: string[] } {
+  const title =
+    markdown.match(/^#\s+(.+)$/m)?.[1]?.trim() || "Japanese lyrics";
+  const segments = markdown.split(MARKDOWN_HR);
+  let best: string[] = [];
+  for (const segment of segments) {
+    const lines = segment
+      .split("\n")
+      .map((raw) => raw.replace(/\u00a0/g, " ").trim())
+      .filter((line) => line && isJapaneseLyricLine(line));
+    if (lines.length > best.length) best = lines;
+  }
+  return { title, lines: best };
 }

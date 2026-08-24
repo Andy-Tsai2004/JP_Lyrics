@@ -1,70 +1,22 @@
-# JP_Lyris
+# JP_Lyrics
 
-## 快速開始
+JP_Lyrics 是一個日文歌詞閱讀器，搜尋區分成「歌名」「歌手」和「歌詞全文」三個
+欄位，並內建即時日文輸入法（羅馬拼音邊打邊轉假名，例如輸入 `yorunikakeru`
+會直接變成 よるにかける；切換到日文輸入前打的英文不會被轉換；可用「あ/A」
+按鈕或 Ctrl+; 切換），歌曲依 Uta-Net 人氣排序，點歌手可展開該歌手的完整歌曲
+列表；或貼上 Bahamut 的作品頁面與 Uta-Net 的歌詞頁面網址，將內容整理為純日文
+歌詞，並在漢字上方加入 ruby 風格的振り仮名，也可切換平假名或羅馬拼音輔助、
+調整字體大小。
 
-```bash
-cd JP_Lyris
-npm install
-npm run dev
-```
+## 線上版本
 
-之後開啟：
+本專案已改為靜態網站，部署於 GitHub Pages：
 
-```text
-http://localhost:8080
-```
+<https://luszechai.github.io/JP_Lyrics/>
 
-JP_Lyris 是一個日文歌詞閱讀器，能從 Bahamut 的作品頁面與 Uta-Net 的歌詞頁面抓取歌詞，將內容整理為純日文歌詞，並加入振り仮名、平假名或羅馬拼音等輔助閱讀功能。
-
-這個專案使用 Vite + React 建立，搭配 TanStack Router / Start、Tailwind 樣式設計，並使用 Kuroshiro 進行日文處理。
-
-## 功能特色
-
-- 直接貼上 Bahamut 作品連結或 Uta-Net 歌詞連結並自動載入歌詞
-- 保留原始頁面中的日文歌詞內容
-- 在漢字上方加入 ruby 風格的振り仮名
-- 可切換顯示平假名或羅馬拼音輔助
-- 可調整歌詞字體大小以提升閱讀舒適度
-- 內建範例文章，可立即測試功能
-
-## 專案概述
-
-此應用程式會接收 Bahamut 的貼文網址或 Uta-Net 的歌詞網址，伺服器端抓取內容，提取相關的日文歌詞，最後在乾淨的閱讀介面中呈現。輸出內容會保留標題與歌詞行，並在文字之上加入日文讀音輔助。
-
-## 技術棧
-
-- React 19
-- Vite
-- TanStack Router / Start
-- TypeScript
-- Tailwind CSS
-- Kuroshiro / Kuromoji
-- Better Auth（可選的應用程式驗證層）
-- PGLite（嵌入式本地資料儲存）
-
-## 專案結構
-
-```text
-JP_Lyris/
-├── README.md
-├── README.zh-Hant.md
-├── package.json
-├── JP_lyris/               # 應用程式原始碼與執行檔
-│   ├── src/
-│   ├── scripts/
-│   ├── server/
-│   ├── public/
-│   ├── migrations/
-│   └── ...
-└── package-lock.json
-```
-
-## 開始使用
-
-在專案根目錄執行：
+## 本機開發
 
 ```bash
-cd JP_Lyris
 npm install
 npm run dev
 ```
@@ -75,24 +27,58 @@ npm run dev
 http://localhost:8080
 ```
 
+## 部署到 GitHub Pages
+
+1. 推送 `main` 分支。專案內建的 GitHub Actions
+   （`.github/workflows/deploy-pages.yml`）會執行 `npm ci` 與
+   `npm run build:pages`，將 `dist/` 上傳為 artifact，並使用官方
+   `actions/deploy-pages` action 部署。
+2. 只需設定一次：在儲存庫的 **Settings → Pages** 中，將 **Source** 設為
+   **GitHub Actions**（Build and deployment），不需要另外選分支。
+
+流程跑完後，網站會發佈到 `https://<使用者>.github.io/<儲存庫>/`。也可以到
+**Actions** 分頁手動重新觸發部署（workflow 支援 `workflow_dispatch`）。
+
+儲存庫必須是公開專案（或 GitHub Pro 方案），才能啟用 GitHub Pages。
+
+### 手動建置 GitHub Pages 版本
+
+```bash
+npm run build:pages    # 輸出 ./dist，base 為 /JP_Lyrics/
+npm run preview:pages  # 在本機預覽建置結果（http://127.0.0.1:8081/JP_Lyrics/）
+```
+
+### 關於歌詞抓取
+
+GitHub Pages 只能託管靜態檔案，因此應用程式會在瀏覽器端透過公開的 CORS 代理
+抓取 Uta-Net 的搜尋結果與歌詞頁面（先試 r.jina.ai 的 Markdown，allorigins /
+codetabs 抓原始 HTML 作為備援）。抓到的歌詞會快取在 `localStorage` 一週，
+重複開啟同一首歌時會立即顯示。
+
 ## 可用指令
 
 ```bash
-npm run dev          # 啟動 Vite 開發伺服器
-npm run build        # 生產環境建置與資料庫遷移
-npm run preview      # 預覽已建置的應用
-npm run typecheck    # TypeScript 檢查
-npm run test         # 執行專案測試
-npm run lint         # ESLint 檢查
-npm run format       # 使用 Prettier 格式化程式碼
+npm run dev           # 啟動 Vite 開發伺服器（port 8080）
+npm run build         # 生產建置（base 為 /）
+npm run build:pages   # GitHub Pages 生產建置（base 為 /JP_Lyrics/）
+npm run preview       # 預覽已建置的應用（base 為 /）
+npm run preview:pages # 預覽 GitHub Pages 版本（/JP_Lyrics/）
+npm run typecheck     # TypeScript 檢查
+npm run test          # 執行專案測試
+npm run lint          # ESLint 檢查
+npm run format        # 使用 Prettier 格式化程式碼
 ```
+
+## 技術棧
+
+- React 19
+- Vite
+- TanStack Router
+- TypeScript
+- Tailwind CSS
+- Kuroshiro / Kuromoji（瀏覽器端振假名）
 
 ## 備註
 
-- 此專案設計為在本機預覽環境中使用 8080 連接埠。
 - 歌詞解析器針對 Bahamut 的日文作品頁面與 Uta-Net 歌詞頁面進行調整。
-- 專案包含可選的驗證與資料持久化基礎架構，但目前的核心功能仍聚焦在日文歌詞閱讀體驗。
-
-## 授權
-
-除非儲存庫擁有者另行指定授權條款，否則此專案僅供本機開發與展示用途。
+- 振假名使用 Kuromoji 字典（約 18 MB），首次抓取歌詞時需下載，之後會快取在記憶體中。
