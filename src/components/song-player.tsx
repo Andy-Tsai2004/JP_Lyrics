@@ -1,4 +1,4 @@
-import { Loader2, Pause, Play } from "lucide-react";
+import { Loader2, Pause, Play, Volume1, Volume2, VolumeX } from "lucide-react";
 import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { Ref } from "react";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,11 @@ type YTPlayer = {
   seekTo: (seconds: number, allowSeekAhead?: boolean) => void;
   getCurrentTime: () => number;
   getDuration: () => number;
+  setVolume: (volume: number) => void;
+  getVolume: () => number;
+  mute: () => void;
+  unMute: () => void;
+  isMuted: () => boolean;
   destroy: () => void;
 };
 
@@ -105,6 +110,18 @@ export function SongPlayer({
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [volume, setVolume] = useState(100);
+  const [muted, setMuted] = useState(false);
+  const volumeRef = useRef(volume);
+  const mutedRef = useRef(muted);
+
+  useEffect(() => {
+    volumeRef.current = volume;
+  }, [volume]);
+
+  useEffect(() => {
+    mutedRef.current = muted;
+  }, [muted]);
 
   useEffect(() => {
     onTimeChangeRef.current = onTimeChange;
@@ -187,6 +204,8 @@ export function SongPlayer({
         events: {
           onReady: (event) => {
             playerRef.current = event.target;
+            event.target.setVolume(volumeRef.current);
+            if (mutedRef.current) event.target.mute();
             event.target.playVideo();
             if (pendingSeekRef.current != null) {
               event.target.seekTo(pendingSeekRef.current, true);
@@ -233,6 +252,23 @@ export function SongPlayer({
     setCurrent(value);
     onTimeChangeRef.current?.(value);
     playerRef.current?.seekTo(value, true);
+  }
+
+  function handleVolumeChange(value: number) {
+    setVolume(value);
+    playerRef.current?.setVolume(value);
+    // Dragging the slider always restores audible output.
+    if (muted) {
+      setMuted(false);
+      playerRef.current?.unMute();
+    }
+  }
+
+  function handleMuteToggle() {
+    const next = !muted;
+    setMuted(next);
+    if (next) playerRef.current?.mute();
+    else playerRef.current?.unMute();
   }
 
   // Expose an external seek so lyric lines can jump the song back to a line's
@@ -304,6 +340,35 @@ export function SongPlayer({
         <span className="shrink-0 text-xs tabular-nums text-muted">
           {formatTime(current)} / {formatTime(max)}
         </span>
+
+        <div className="flex shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleMuteToggle}
+            aria-label={muted ? "Unmute" : "Mute"}
+            aria-pressed={muted}
+            className="flex size-8 items-center justify-center rounded-full text-muted transition-colors hover:text-foreground"
+          >
+            {muted || volume === 0 ? (
+              <VolumeX className="size-4" />
+            ) : volume < 50 ? (
+              <Volume1 className="size-4" />
+            ) : (
+              <Volume2 className="size-4" />
+            )}
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={muted ? 0 : volume}
+            onChange={(e) => handleVolumeChange(Number(e.target.value))}
+            disabled={!playerRef.current}
+            className="h-1.5 w-16 accent-primary sm:w-20 disabled:cursor-default disabled:opacity-40"
+            aria-label="Volume"
+          />
+        </div>
       </div>
 
       {error ? (
