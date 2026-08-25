@@ -658,7 +658,7 @@ export function SongPlayer({
           step={0.5}
           value={Math.min(current, max || 100)}
           onChange={(e) => handleSeek(Number(e.target.value))}
-          disabled={!playerRef.current || max === 0}
+          disabled={(!playerRef.current && !audioMode) || max === 0}
           className="h-1.5 w-full min-w-0 accent-primary disabled:cursor-default disabled:opacity-40"
           aria-label="Playback position"
         />
