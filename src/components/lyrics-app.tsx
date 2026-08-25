@@ -1237,6 +1237,9 @@ export function LyricsApp() {
                 <LyricsDisplay
                   lines={displayLines}
                   activeIndex={displayActiveIndex}
+                  activeTime={
+                    displayActiveIndex != null ? currentTime + lyricOffset : undefined
+                  }
                   onLineClick={
                     syncStatus === "ok" && timedLines && timedLines.length > 0
                       ? handleLyricLineClick

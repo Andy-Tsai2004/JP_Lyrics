@@ -53,6 +53,7 @@ function renderTokenWithAssist(
 export function LyricsDisplay({
   lines,
   activeIndex,
+  activeTime,
   onLineClick,
   showFurigana,
   rubyAssistMode,
@@ -61,6 +62,8 @@ export function LyricsDisplay({
   lines: LyricLine[];
   /** When provided, the line at this index is highlighted and auto-scrolled. */
   activeIndex?: number;
+  /** Playback position (seconds) used to highlight words within the active line. */
+  activeTime?: number;
   /** When provided, clicking a line calls back with its index (seek target). */
   onLineClick?: (index: number) => void;
   showFurigana: boolean;
@@ -88,51 +91,94 @@ export function LyricsDisplay({
       )}
     >
       {lines.map((line, i) => (
-        <p
+        <WordLine
           key={`${i}-${line.text}`}
-          aria-current={syncing && i === activeIndex ? "true" : undefined}
-          role={onLineClick ? "button" : undefined}
-          tabIndex={onLineClick ? 0 : undefined}
-          onClick={onLineClick ? () => onLineClick(i) : undefined}
-          onKeyDown={
-            onLineClick
-              ? (event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    onLineClick(i);
-                  }
-                }
-              : undefined
-          }
-          className={cn(
-            "font-serif text-foreground transition-colors duration-300",
-            showFurigana && "pt-1",
-            syncing &&
-              (i === activeIndex ? "font-medium text-foreground" : "text-subtle"),
-            onLineClick &&
-              "cursor-pointer outline-none hover:text-foreground focus-visible:text-foreground",
-          )}
-          style={{
-            fontSize: `${fontSizeRem}rem`,
-            lineHeight: showFurigana ? 1.74 : 1.62,
-          }}
-        >
-          {showFurigana
-            ? line.tokens.map((token, j) =>
-                token.furigana ? (
-                  <ruby key={j} className="ruby-token">
+          line={line}
+          syncing={syncing}
+          isActiveLine={syncing && i === activeIndex}
+          activeTime={activeTime}
+          onLineClick={onLineClick ? () => onLineClick(i) : undefined}
+          showFurigana={showFurigana}
+          rubyAssistMode={rubyAssistMode}
+          fontSizeRem={fontSizeRem}
+        />
+      ))}
+    </div>
+  );
+}
+
+function WordLine({
+  line,
+  syncing,
+  isActiveLine,
+  activeTime,
+  onLineClick,
+  showFurigana,
+  rubyAssistMode,
+  fontSizeRem,
+}: {
+  line: LyricLine;
+  syncing: boolean;
+  isActiveLine: boolean;
+  activeTime?: number;
+  onLineClick?: () => void;
+  showFurigana: boolean;
+  rubyAssistMode: RubyAssistMode;
+  fontSizeRem: number;
+}) {
+  const timedLine = isActiveLine && line.tokens.some((token) => token.start != null);
+  const renderTokens = showFurigana || timedLine;
+  return (
+    <p
+      aria-current={isActiveLine ? "true" : undefined}
+      role={onLineClick ? "button" : undefined}
+      tabIndex={onLineClick ? 0 : undefined}
+      onClick={onLineClick}
+      onKeyDown={
+        onLineClick
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onLineClick();
+              }
+            }
+          : undefined
+      }
+      className={cn(
+        "font-serif text-foreground transition-colors duration-300",
+        showFurigana && "pt-1",
+        syncing && (isActiveLine ? "font-medium text-foreground" : "text-subtle"),
+        onLineClick &&
+          "cursor-pointer outline-none hover:text-foreground focus-visible:text-foreground",
+      )}
+      style={{
+        fontSize: `${fontSizeRem}rem`,
+        lineHeight: showFurigana ? 1.74 : 1.62,
+      }}
+    >
+      {renderTokens
+        ? line.tokens.map((token, j) => {
+            const timed = timedLine && activeTime != null && token.start != null;
+            const sung = timed && activeTime >= token.start!;
+            return (
+              <span
+                key={j}
+                className={timed ? (sung ? "text-foreground" : "text-subtle") : undefined}
+              >
+                {showFurigana && token.furigana ? (
+                  <ruby className="ruby-token">
                     {token.text}
                     <rt>{token.furigana}</rt>
                   </ruby>
-                ) : rubyAssistMode !== "furigana" && containsKatakana(token.text) ? (
-                  <span key={j}>{renderTokenWithAssist(token.text, rubyAssistMode)}</span>
+                ) : showFurigana && rubyAssistMode !== "furigana" && containsKatakana(token.text) ? (
+                  renderTokenWithAssist(token.text, rubyAssistMode)
                 ) : (
-                  <span key={j}>{token.text}</span>
-                ),
-              )
-            : line.text}
-        </p>
-      ))}
-    </div>
+                  token.text
+                )}
+              </span>
+            );
+          })
+        : line.text}
+    </p>
   );
 }

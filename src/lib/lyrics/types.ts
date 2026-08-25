@@ -1,6 +1,10 @@
 export type RubyToken = {
   text: string;
   furigana?: string;
+  /** Seconds into the track when this word starts (word-level synced lyrics). */
+  start?: number;
+  /** Seconds when the next word starts; present only when `start` is set. */
+  end?: number;
 };
 
 export type LyricLine = {
