@@ -71,6 +71,11 @@ async function resolveApiBase(): Promise<string> {
   return base;
 }
 
+/** Whether a stem service is currently configured ("" = feature off). */
+export async function isStemsServiceAvailable(): Promise<boolean> {
+  return (await resolveApiBase()) !== "";
+}
+
 export type StemInfo =
   | { state: "ready"; full: string; vocals: string; error?: never }
   | { state: "generating"; full?: never; vocals?: never; error?: never }

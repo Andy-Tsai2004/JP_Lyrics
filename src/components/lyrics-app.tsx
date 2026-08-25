@@ -47,7 +47,13 @@ import {
 } from "@/lib/lyrics/search";
 import type { LyricsResult } from "@/lib/lyrics/types";
 import { cn } from "@/lib/utils";
-import { getStemStatus, requestStem, utaNetSongId, type StemInfo } from "@/lib/stems";
+import {
+  getStemStatus,
+  isStemsServiceAvailable,
+  requestStem,
+  utaNetSongId,
+  type StemInfo,
+} from "@/lib/stems";
 
 const BAHAMUT_SAMPLE_URL = "https://home.gamer.com.tw/artwork.php?sn=6306141";
 const UTANET_SAMPLE_URL = "https://www.uta-net.com/song/397348/";
@@ -236,45 +242,61 @@ export function LyricsApp() {
   const [libraryView, setLibraryView] = useState<LibraryView | null>(null);
   // Auto-detected off-vocal stem (from the generator service) for the loaded song.
   const [stems, setStems] = useState<StemInfo | null>(null);
+  // Whether a stem service is configured (null = still checking).
+  const [stemsAvailable, setStemsAvailable] = useState<boolean | null>(null);
+  // Incremented on song change / re-trigger to invalidate in-flight polls.
+  const stemRequestRef = useRef(0);
 
   const resultSource = result?.sourceUrl ?? null;
   const resultTitle = result?.title ?? "";
 
-  // When a Uta-Net song loads, ask the stem generator whether an off-vocal
-  // version is ready; if not, trigger generation and poll until it is (or the
-  // service is unreachable — then we fall back to the manual upload path).
-  useEffect(() => {
-    setStems(null);
-    const sourceUrl = result?.sourceUrl ?? "";
-    if (!sourceUrl || !utaNetSongId(sourceUrl)) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const poll = async (first: boolean) => {
-      const id = utaNetSongId(sourceUrl)!;
+  /** Check stem status; when `trigger`, POST to start generation if unknown. */
+  const pollStem = useCallback(
+    async (sourceUrl: string, trigger: boolean) => {
+      const id = utaNetSongId(sourceUrl);
+      if (!id) return;
+      const reqId = ++stemRequestRef.current;
       let st = await getStemStatus(id);
-      if (first && st?.state === "unknown") st = await requestStem(sourceUrl);
-      if (cancelled) return;
+      if (trigger && st?.state === "unknown") st = await requestStem(sourceUrl);
+      if (reqId !== stemRequestRef.current) return; // song changed / re-triggered
       if (st?.state === "ready") {
         setStems(st);
         return;
       }
       if (st?.state === "generating") {
         setStems({ state: "generating" });
-        timer = setTimeout(() => void poll(false), 4000);
-        return;
-      }
-      if (st?.state === "error") {
-        setStems(null);
+        setTimeout(() => {
+          if (reqId === stemRequestRef.current) void pollStem(sourceUrl, false);
+        }, 4000);
         return;
       }
       setStems(null);
-    };
-    void poll(true);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    setStemsAvailable(null);
+    let cancelled = false;
+    void isStemsServiceAvailable().then((ok) => {
+      if (!cancelled) setStemsAvailable(ok);
+    });
     return () => {
       cancelled = true;
-      if (timer) clearTimeout(timer);
     };
   }, [result?.sourceUrl]);
+
+  // Check whether an off-vocal already exists / is already generating (e.g.
+  // another tab started it). Generation itself only starts on user click.
+  useEffect(() => {
+    setStems(null);
+    const sourceUrl = result?.sourceUrl ?? "";
+    if (!sourceUrl || !utaNetSongId(sourceUrl)) return;
+    void pollStem(sourceUrl, false);
+    return () => {
+      stemRequestRef.current++; // invalidate any in-flight poll for the old song
+    };
+  }, [result?.sourceUrl, pollStem]);
 
   const setIme = useCallback((next: boolean) => {
     imeEnabledRef.current = next;
@@ -1099,6 +1121,11 @@ export function LyricsApp() {
                 onPickKaraoke={pickKaraoke}
                 chosenKaraokeTitle={chosenKaraoke?.title}
                 stems={stems}
+                onGenerateKaraoke={
+                  utaNetSongId(result.sourceUrl) && stemsAvailable === true
+                    ? () => void pollStem(result.sourceUrl, true)
+                    : undefined
+                }
                 ref={songPlayerRef}
               />
 

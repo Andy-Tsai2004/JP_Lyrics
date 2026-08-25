@@ -151,6 +151,7 @@ export function SongPlayer({
   onPickKaraoke,
   chosenKaraokeTitle,
   stems = null,
+  onGenerateKaraoke,
   ref,
 }: {
   sourceUrl: string;
@@ -179,6 +180,8 @@ export function SongPlayer({
   chosenKaraokeTitle?: string;
   /** An auto-generated off-vocal stem served by the generator service. */
   stems?: StemInfo | null;
+  /** When provided (and no stem is ready), the user can start generation. */
+  onGenerateKaraoke?: () => void;
   ref?: Ref<SongPlayerHandle>;
 }) {
   const playerRef = useRef<YTPlayer | null>(null);
@@ -679,6 +682,17 @@ export function SongPlayer({
             <span className="flex items-center gap-1.5 text-xs text-muted">
               <Loader2 className="size-3.5 animate-spin" /> Generating off-vocal…
             </span>
+          ) : null}
+          {stems == null && onGenerateKaraoke ? (
+            <button
+              type="button"
+              onClick={onGenerateKaraoke}
+              className="flex h-9 items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-3 text-xs font-medium text-foreground transition-colors hover:bg-primary/20"
+              title="Generate the off-vocal (karaoke) version with Demucs — takes about 1-2 minutes"
+            >
+              <Sparkles className="size-3.5" />
+              Generate karaoke
+            </button>
           ) : null}
           {stemActive ? (
             <>
