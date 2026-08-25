@@ -1,6 +1,5 @@
 import {
   Loader2,
-  Mic,
   Music2,
   Pause,
   Play,
@@ -16,7 +15,6 @@ import {
   useImperativeHandle,
   useRef,
   useState,
-  type ChangeEvent,
 } from "react";
 import type { Ref } from "react";
 import { Button } from "@/components/ui/button";
@@ -203,22 +201,13 @@ export function SongPlayer({
   const volumeRef = useRef(volume);
   const mutedRef = useRef(muted);
 
-  // --- Web Audio vocal-toggle (center-channel cancellation on a page-owned
-  // audio source). The YouTube embed's audio is unreachable by Web Audio, so
-  // this operates on a separate <audio> element the page controls; it lets the
-  // user turn the vocals off/on instantly at the exact same timestamp. ---
+  // The generated off-vocal stem plays from a page-owned <audio> element (the
+  // YouTube embed's audio is unreachable by the page).
   const audioElRef = useRef<HTMLAudioElement | null>(null);
-  const audioFileInputRef = useRef<HTMLInputElement | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const gainFullRef = useRef<GainNode | null>(null);
-  const karaokeGainRef = useRef<GainNode | null>(null);
-  const audioGraphReadyRef = useRef(false);
-  const [audioSrc, setAudioSrc] = useState<string | null>(null);
-  const [vocalOn, setVocalOn] = useState(true);
-  // Auto-generated off-vocal stem: two page-owned files we swap between.
-  const [stemFiles, setStemFiles] = useState<{ full: string; vocals: string } | null>(null);
+  // Auto-generated off-vocal stem: the single page-owned file we play.
+  const [stemUrl, setStemUrl] = useState<string | null>(null);
   const [stemActive, setStemActive] = useState(false);
-  const audioMode = !!audioSrc || stemActive;
+  const audioMode = stemActive;
   const audioModeRef = useRef(audioMode);
   audioModeRef.current = audioMode;
 
@@ -277,13 +266,8 @@ export function SongPlayer({
       a.removeAttribute("src");
       a.load();
     }
-    audioCtxRef.current?.close().catch(() => {});
-    audioCtxRef.current = null;
-    audioGraphReadyRef.current = false;
-    setAudioSrc(null);
-    setStemFiles(null);
+    setStemUrl(null);
     setStemActive(false);
-    setVocal(true);
   }, [stopTick]);
 
   useEffect(() => {
@@ -460,100 +444,6 @@ export function SongPlayer({
     void playCurrent();
   };
 
-  // ---- Web Audio vocal-toggle (L−R center cancellation) ----
-  function initAudioGraph() {
-    if (audioGraphReadyRef.current || !audioElRef.current) return;
-    const Ctx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return;
-    const ctx = new Ctx();
-    const src = ctx.createMediaElementSource(audioElRef.current);
-    // Path A — full stereo (vocals on)
-    const gainFull = ctx.createGain();
-    gainFull.gain.value = vocalOn ? 1 : 0;
-    src.connect(gainFull);
-    gainFull.connect(ctx.destination);
-    // Path B — karaoke: L' = 0.5L − 0.5R, R' = 0.5R − 0.5L
-    const splitter = ctx.createChannelSplitter(2);
-    src.connect(splitter);
-    const merged = ctx.createChannelMerger(2);
-    const aL = ctx.createGain();
-    aL.gain.value = 0.5;
-    const aR = ctx.createGain();
-    aR.gain.value = -0.5;
-    splitter.connect(aL, 0, 0);
-    splitter.connect(aR, 1, 0);
-    aL.connect(merged, 0, 0);
-    aR.connect(merged, 0, 0);
-    const bR = ctx.createGain();
-    bR.gain.value = 0.5;
-    const bL = ctx.createGain();
-    bL.gain.value = -0.5;
-    splitter.connect(bR, 1, 0);
-    splitter.connect(bL, 0, 0);
-    bR.connect(merged, 0, 1);
-    bL.connect(merged, 0, 1);
-    const karaokeGain = ctx.createGain();
-    karaokeGain.gain.value = vocalOn ? 0 : 1;
-    merged.connect(karaokeGain);
-    karaokeGain.connect(ctx.destination);
-    audioCtxRef.current = ctx;
-    gainFullRef.current = gainFull;
-    karaokeGainRef.current = karaokeGain;
-    audioGraphReadyRef.current = true;
-  }
-
-  function setVocal(on: boolean) {
-    setVocalOn(on);
-    const ctx = audioCtxRef.current;
-    if (!ctx || !gainFullRef.current || !karaokeGainRef.current) return;
-    ctx.resume();
-    const t = ctx.currentTime;
-    const dur = 0.015;
-    gainFullRef.current.gain.cancelScheduledValues(t);
-    gainFullRef.current.gain.setValueAtTime(gainFullRef.current.gain.value, t);
-    gainFullRef.current.gain.linearRampToValueAtTime(on ? 1 : 0, t + dur);
-    karaokeGainRef.current.gain.cancelScheduledValues(t);
-    karaokeGainRef.current.gain.setValueAtTime(karaokeGainRef.current.gain.value, t);
-    karaokeGainRef.current.gain.linearRampToValueAtTime(on ? 0 : 1, t + dur);
-  }
-
-  function toggleVocalAudio() {
-    const a = audioElRef.current;
-    if (stemFiles && a) {
-      // Swap between the full mix (vocals on) and the off-vocal stem at the
-      // same timestamp — both are the same recording, so alignment holds.
-      const t = a.currentTime;
-      a.src = vocalOn ? stemFiles.vocals : stemFiles.full;
-      a.load();
-      a.play().catch(() => {});
-      a.currentTime = t;
-      setVocal(!vocalOn);
-      return;
-    }
-    if (audioSrc) {
-      initAudioGraph();
-      setVocal(!vocalOn);
-      return;
-    }
-    audioFileInputRef.current?.click();
-  }
-
-  function onLoadAudio(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    if (audioSrc?.startsWith("blob:")) URL.revokeObjectURL(audioSrc);
-    const url = URL.createObjectURL(file);
-    // A vocal toggle needs the page to own the audio; pause the video so the
-    // two don't play at once.
-    playerRef.current?.pauseVideo();
-    setAudioSrc(url);
-    setVocal(true);
-    audioElRef.current?.load();
-    event.target.value = "";
-  }
-
   // Keep the shared transport in sync with the <audio> element in audio mode.
   useEffect(() => {
     const a = audioElRef.current;
@@ -588,37 +478,28 @@ export function SongPlayer({
     };
   }, []);
 
-  // When an audio source is loaded, wire the vocal-toggle graph and start playback.
-  useEffect(() => {
-    if (!audioSrc || !audioElRef.current) return;
-    initAudioGraph();
-    audioElRef.current.play().catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: run only on audioSrc change
-  }, [audioSrc]);
-
   // ---- Auto-detected off-vocal stem: adopt it when the service reports ready ----
   useEffect(() => {
     if (stems?.state === "ready") {
-      setStemFiles({ full: stems.full, vocals: stems.vocals });
+      setStemUrl(stems.vocals);
     } else {
-      setStemFiles(null);
+      setStemUrl(null);
       setStemActive(false);
     }
-  }, [stems?.state, stems?.full, stems?.vocals]);
+  }, [stems?.state, stems?.vocals]);
 
-  // Load the full mix once a stem becomes available (then the user can toggle
-  // the vocals off/on by swapping between the two page-owned files).
+  // The generated off-vocal IS the karaoke track (no vocal toggle anymore):
+  // load and play it as soon as it's ready.
   useEffect(() => {
-    if (!stemFiles || stemActive) return;
+    if (!stemUrl || stemActive) return;
     const a = audioElRef.current;
     if (a) {
-      a.src = stemFiles.full;
+      a.src = stemUrl;
       a.load();
       a.play().catch(() => {});
     }
-    setVocal(true);
     setStemActive(true);
-  }, [stemFiles, stemActive]);
+  }, [stemUrl, stemActive]);
 
   function handlePause() {
     if (audioMode) {
@@ -710,7 +591,7 @@ export function SongPlayer({
         <div id={PLAYER_ELEMENT_ID} />
       </div>
 
-      <audio ref={audioElRef} src={audioSrc ?? undefined} className="hidden" />
+      <audio ref={audioElRef} className="hidden" />
 
       <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-surface p-3">
         <Button
@@ -782,38 +663,11 @@ export function SongPlayer({
               <Loader2 className="size-3.5 animate-spin" /> Generating off-vocal…
             </span>
           ) : null}
-          <button
-            type="button"
-            onClick={toggleVocalAudio}
-            className={cn(
-              "flex h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors",
-              audioMode && !vocalOn
-                ? "border-primary/40 bg-primary/10 text-foreground hover:bg-primary/20"
-                : "border-border text-muted hover:text-foreground",
-            )}
-            title={
-              audioMode
-                ? vocalOn
-                  ? "Turn the vocals off instantly (same timestamp)"
-                  : "Turn the vocals back on instantly (same timestamp)"
-                : "Load a vocal-track audio file to turn the vocals off at the same timestamp"
-            }
-          >
-            <Mic className="size-3.5" />
-            {audioMode ? (vocalOn ? "Vocals on" : "Vocals off") : "Vocal toggle"}
-          </button>
-          {stemFiles ? (
+          {stemActive ? (
             <span className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/5 px-2 py-1 text-[10px] font-medium text-primary">
               <Music2 className="size-3" /> Off-vocal
             </span>
           ) : null}
-          <input
-            ref={audioFileInputRef}
-            type="file"
-            accept="audio/*"
-            className="hidden"
-            onChange={onLoadAudio}
-          />
         </div>
 
         {!audioMode ? (
