@@ -24,6 +24,7 @@ stems_cache/
 .cloudflared/
 .service.pid
 .tunnel.pid
+.tunnel-url
 
 .DS_Store
 Thumbs.db

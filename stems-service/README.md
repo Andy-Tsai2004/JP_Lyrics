@@ -34,43 +34,52 @@ The site build needs your service's HTTPS URL: set
 
 ```bash
 cd stems-service
-bash run-wsl.sh        # creates .venv, installs demucs (~2 GB first time), starts on :8000
+bash run-tunnel.sh --local   # WSL-native venv + cache in ~/.jplyrics-stems, starts on :8000
 ```
 
 Then in the repo, add to `.env.local`: `VITE_STEMS_API_URL=http://localhost:8000`.
-
-*(Not for the public site — WSL2 on your PC isn't reachable by github.io visitors.)*
+Windows reaches the WSL2 service via `localhost` (WSL2 loopback forwarding).
 
 **People on github.io, free, PC as the server (Cloudflare Tunnel):**
 
-On Windows (PowerShell), from this folder:
+Recommended: run the host **inside WSL2** (clean env, native-ext4 venv/cache,
+keeps torch/demucs off your Windows Python). From Windows PowerShell, in this
+folder:
+
+```powershell
+.\run-tunnel-wsl.ps1                # service + tunnel in WSL, then ask to push
+.\run-tunnel-wsl.ps1 -AutoUpdate    # same, but push the new URL without asking
+.\run-tunnel-wsl.ps1 -LocalOnly     # service only (localhost:8000), no tunnel
+.\run-tunnel-wsl.ps1 -StopOnly      # stop
+```
+
+First run installs ffmpeg + demucs/torch inside WSL (~2 GB, a few minutes);
+the venv and the stems cache live in `~/.jplyrics-stems` (native ext4 — never
+on `/mnt/c`, which is too slow for torch). `cloudflared` is downloaded there
+too. The script prints a `https://<random>.trycloudflare.com` URL, updates
+`public/stems-config.json`, and pushes it with your **Windows git
+credentials**; the deployed site reads that file at runtime, so github.io
+visitors get the new URL **without a rebuild** (only the config push has to
+land, ~1-2 min for Pages to redeploy).
+
+Equivalent from a WSL terminal:
+
+```bash
+cd /mnt/c/Users/<you>/<repo>/stems-service
+bash run-tunnel.sh          # service + tunnel; updates the config, push manually
+bash run-tunnel.sh --local  # service only
+bash stop-tunnel.sh         # stop
+```
+
+Alternative — run natively on Windows (no WSL), same URL workflow:
 
 ```powershell
 .\run-tunnel.ps1          # start service + tunnel, then ask to update the site
 .\run-tunnel.ps1 -AutoUpdate   # same, but push the new URL without asking
 ```
 
-The script reuses the existing `.venv-stems` (creates it on first run, ~2 GB
-for torch/demucs), downloads `cloudflared.exe` into `stems-service/.cloudflared/`
-if needed, starts the service on `:8000` and opens a public quick tunnel. It
-prints a `https://<random>.trycloudflare.com` URL and - unless you skip it -
-writes it into `public/stems-config.json` and pushes it. The deployed site
-reads that file at runtime, so github.io visitors get the new URL **without a
-rebuild**; only the config push has to land (~1-2 min for Pages to redeploy).
-Stop it any time with `.\stop-tunnel.ps1`.
-
-On Linux / WSL2, the old bash one-liner still works:
-
-```bash
-cd stems-service
-bash run-tunnel.sh     # starts the service AND opens a public HTTPS tunnel
-```
-
-It prints a `https://<random>.trycloudflare.com` URL and anyone on the site
-gets off-vocal **while this PC stays on**. The URL changes every run; the
-Windows script updates the site automatically, the bash one needs the manual
-config edit. (First request per song is a ~90 s CPU generation on your machine,
-then cached.)
+It reuses the existing `.venv-stems` on Windows. (First request per song is a
+~90 s CPU generation on your machine, then cached.)
 
 > The site URL is resolved at runtime from `public/stems-config.json`
 > (`{ "apiUrl": "" }` = feature off). `VITE_STEMS_API_URL` still works as a
@@ -108,13 +117,11 @@ docker run -d --name jplyrics-stems \
 
 Put **TLS** in front (Caddy / nginx / a cloud LB) so the service is `https://`,
 because the deployed site is `https://` and a browser will block calls to an
-`http://` backend (mixed content). Point the site at it with:
-
-```
-VITE_STEMS_API_URL=https://stems.your-host.example
-```
-
-(set it at **build time** — `import.meta.env.VITE_STEMS_API_URL` is inlined).
+`http://` backend (mixed content). The site does **not** need a rebuild for a
+URL change — put the service base URL in `public/stems-config.json`
+(`{ "apiUrl": "https://stems.your-host.example" }`) and commit/push it. The
+app reads it at runtime and falls back to the manual upload path when it's
+empty.
 
 ## Run locally (dev)
 
