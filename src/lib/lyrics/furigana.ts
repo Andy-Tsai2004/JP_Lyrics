@@ -1,5 +1,6 @@
 import Kuroshiro from "kuroshiro";
 import KuromojiAnalyzer from "kuroshiro-analyzer-kuromoji";
+import { splitAnnotatedLine } from "./annotations";
 import type { LyricLine, RubyToken } from "./types";
 
 type KuroshiroLike = {
@@ -69,15 +70,42 @@ export function htmlToTokens(html: string): RubyToken[] {
   return tokens;
 }
 
+async function appendKuroshiroTokens(
+  kuroshiro: KuroshiroLike,
+  text: string,
+  tokens: RubyToken[],
+): Promise<void> {
+  if (!text) return;
+  const html = await kuroshiro.convert(text, {
+    to: "hiragana",
+    mode: "furigana",
+  });
+  tokens.push(...htmlToTokens(html));
+}
+
+async function annotateLine(
+  kuroshiro: KuroshiroLike,
+  text: string,
+): Promise<RubyToken[]> {
+  const tokens: RubyToken[] = [];
+  for (const segment of splitAnnotatedLine(text)) {
+    if (segment.furigana) {
+      // The song's own reading (幻（ゆめ） → 幻/ゆめ); the parentheses were
+      // consumed so the reading is shown once, as the ruby.
+      tokens.push({ text: segment.text, furigana: segment.furigana });
+    } else {
+      // Un-annotated text is read by Kuroshiro's dictionary as before.
+      await appendKuroshiroTokens(kuroshiro, segment.text, tokens);
+    }
+  }
+  return tokens;
+}
+
 export async function addFurigana(lines: string[]): Promise<LyricLine[]> {
   const kuroshiro = await getConverter();
   const result: LyricLine[] = [];
   for (const text of lines) {
-    const html = await kuroshiro.convert(text, {
-      to: "hiragana",
-      mode: "furigana",
-    });
-    result.push({ text, tokens: htmlToTokens(html) });
+    result.push({ text, tokens: await annotateLine(kuroshiro, text) });
   }
   return result;
 }
