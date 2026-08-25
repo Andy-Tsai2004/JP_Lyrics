@@ -11,7 +11,7 @@ import type { LyricsResult } from "./types";
 const BAHAMUT_HOST = /(^|\.)gamer\.com\.tw$/i;
 const UTANET_HOST = /(^|\.)uta-net\.com$/i;
 
-const CACHE_PREFIX = "jplyrics:cache:";
+const CACHE_PREFIX = "jplyrics:cache:v2:";
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // keep lyrics for a week
 
 type CacheEntry = {

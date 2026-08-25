@@ -18,6 +18,8 @@
     "preview:pages": "node scripts/serve-pages.mjs",
     "typecheck": "tsc --noEmit",
     "check:auth": "node scripts/check-auth-invariant.mjs",
+    "karaoke:stem": "python scripts/karaoke-stem.py",
+    "karaoke:stem:check": "python scripts/karaoke-stem.py --check",
     "test": "node --test 'scripts/**/*.test.mjs'",
     "lint": "eslint .",
     "format": "prettier --write ."

@@ -1,19 +1,14 @@
-import { Loader2, Pause, Play, Volume1, Volume2, VolumeX } from "lucide-react";
+import { Loader2, Music2, Pause, Play, Sparkles, Volume1, Volume2, VolumeX } from "lucide-react";
 import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { Ref } from "react";
 import { Button } from "@/components/ui/button";
-import { resolveVideoId, youtubeSearchUrl } from "@/lib/lyrics/video";
+import { cn } from "@/lib/utils";
+import { splitTitle } from "@/lib/lyrics/lrc";
+import { resolveKaraokeVideoId, resolveVideoId, youtubeSearchUrl } from "@/lib/lyrics/video";
 
 const PLAYER_ELEMENT_ID = "jplyrics-youtube-player";
 
-type PlayerStatus =
-  | "idle"
-  | "resolving"
-  | "loading"
-  | "playing"
-  | "paused"
-  | "ended"
-  | "error";
+type PlayerStatus = "idle" | "resolving" | "loading" | "playing" | "paused" | "ended" | "error";
 
 export type SongPlayerHandle = {
   /**
@@ -22,6 +17,14 @@ export type SongPlayerHandle = {
    * position, which is applied when the user presses Play.
    */
   seekTo: (seconds: number) => void;
+  /**
+   * Resolve and play the song, optionally forcing the karaoke / off-vocal
+   * variant. Used by the "Generate karaoke" control so it can swap the
+   * backing track on demand (and back to the original vocals).
+   */
+  play: (variant: "vocal" | "karaoke") => void;
+  /** Play a specific backing-track video id the user chose from the picker. */
+  playKaraokeVideo: (videoId: string) => void;
 };
 
 type YTPlayer = {
@@ -93,16 +96,26 @@ export function SongPlayer({
   sourceUrl,
   title,
   onTimeChange,
+  karaoke = false,
+  onKaraokeAction,
   ref,
 }: {
   sourceUrl: string;
   title: string;
   /** Reports the current playback position in seconds as it changes. */
   onTimeChange?: (seconds: number) => void;
+  /** When true, resolve and play a karaoke / off-vocal video instead of the official one. */
+  karaoke?: boolean;
+  /** Fired when the karaoke variant button is clicked (find / back-to-vocals). */
+  onKaraokeAction?: () => void;
   ref?: Ref<SongPlayerHandle>;
 }) {
   const playerRef = useRef<YTPlayer | null>(null);
   const sourceRef = useRef(sourceUrl);
+  const karaokeRef = useRef(karaoke);
+  const statusRef = useRef<PlayerStatus>("idle");
+  const handlePlayRef = useRef<() => void>(() => {});
+  const startWithVideoIdRef = useRef<(videoId: string) => void>(() => {});
   const tickTimer = useRef<number | null>(null);
   const pendingSeekRef = useRef<number | null>(null);
   const onTimeChangeRef = useRef(onTimeChange);
@@ -126,6 +139,10 @@ export function SongPlayer({
   useEffect(() => {
     onTimeChangeRef.current = onTimeChange;
   }, [onTimeChange]);
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   const stopTick = useCallback(() => {
     if (tickTimer.current !== null) {
@@ -152,11 +169,16 @@ export function SongPlayer({
     playerRef.current?.destroy();
     playerRef.current = null;
     pendingSeekRef.current = null;
+    statusRef.current = "idle";
     setStatus("idle");
     setCurrent(0);
     setDuration(0);
     setError(null);
   }, [stopTick]);
+
+  useEffect(() => {
+    karaokeRef.current = karaoke;
+  }, [karaoke]);
 
   useEffect(() => {
     sourceRef.current = sourceUrl;
@@ -169,7 +191,7 @@ export function SongPlayer({
   }, [sourceUrl, reset, stopTick]);
 
   async function handlePlay() {
-    if (status === "resolving" || status === "loading") return;
+    if (statusRef.current === "resolving" || statusRef.current === "loading") return;
     if (playerRef.current) {
       playerRef.current.playVideo();
       return;
@@ -178,71 +200,84 @@ export function SongPlayer({
     setStatus("resolving");
     setError(null);
     const target = sourceUrl;
+    const mode = karaokeRef.current;
 
-    const videoId = await resolveVideoId(target);
-    if (target !== sourceRef.current) return; // song changed while resolving
+    const videoId = mode ? await resolveKaraokeVideoId(title) : await resolveVideoId(target);
+    if (target !== sourceRef.current || mode !== karaokeRef.current) return; // song/variant changed while resolving
     if (!videoId) {
       setStatus("error");
-      setError("這個來源沒有可直接嵌入的官方影片。");
+      setError(
+        mode ? "找不到可直接嵌入的卡拉OK／伴奏影片。" : "這個來源沒有可直接嵌入的官方影片。",
+      );
       return;
     }
 
-    setStatus("loading");
-    try {
-      const YT = await loadYouTubeApi();
-      if (target !== sourceRef.current) return;
-      const player = new YT.Player(PLAYER_ELEMENT_ID, {
-        videoId,
-        host: "https://www.youtube-nocookie.com",
-        playerVars: {
-          autoplay: 1,
-          playsinline: 1,
-          rel: 0,
-          controls: 0,
-          disablekb: 1,
-        },
-        events: {
-          onReady: (event) => {
-            playerRef.current = event.target;
-            event.target.setVolume(volumeRef.current);
-            if (mutedRef.current) event.target.mute();
-            event.target.playVideo();
-            if (pendingSeekRef.current != null) {
-              event.target.seekTo(pendingSeekRef.current, true);
-              pendingSeekRef.current = null;
-            }
-          },
-          onStateChange: (event) => {
-            switch (event.data) {
-              case 1: // playing
-                setStatus("playing");
-                startTick();
-                break;
-              case 2: // paused
-                setStatus("paused");
-                stopTick();
-                break;
-              case 0: // ended
-                setStatus("ended");
-                stopTick();
-                setCurrent(0);
-                onTimeChangeRef.current?.(0);
-                break;
-            }
-          },
-          onError: () => {
-            stopTick();
-            setStatus("error");
-            setError("YouTube 無法播放這個影片（可能受地區或版權限制）。");
-          },
-        },
-      });
-      playerRef.current = player;
-    } catch {
-      setStatus("error");
-      setError("無法載入 YouTube 播放器，請稍後再試。");
-    }
+    startWithVideoId(videoId);
   }
+  handlePlayRef.current = handlePlay;
+
+  /** Load and play a specific YouTube video id (skips resolve; used by the picker). */
+  function startWithVideoId(videoId: string) {
+    const target = sourceRef.current;
+    setStatus("loading");
+    void (async () => {
+      try {
+        const YT = await loadYouTubeApi();
+        if (target !== sourceRef.current) return;
+        const player = new YT.Player(PLAYER_ELEMENT_ID, {
+          videoId,
+          host: "https://www.youtube-nocookie.com",
+          playerVars: {
+            autoplay: 1,
+            playsinline: 1,
+            rel: 0,
+            controls: 0,
+            disablekb: 1,
+          },
+          events: {
+            onReady: (event) => {
+              playerRef.current = event.target;
+              event.target.setVolume(volumeRef.current);
+              if (mutedRef.current) event.target.mute();
+              event.target.playVideo();
+              if (pendingSeekRef.current != null) {
+                event.target.seekTo(pendingSeekRef.current, true);
+                pendingSeekRef.current = null;
+              }
+            },
+            onStateChange: (event) => {
+              switch (event.data) {
+                case 1: // playing
+                  setStatus("playing");
+                  startTick();
+                  break;
+                case 2: // paused
+                  setStatus("paused");
+                  stopTick();
+                  break;
+                case 0: // ended
+                  setStatus("ended");
+                  stopTick();
+                  setCurrent(0);
+                  onTimeChangeRef.current?.(0);
+                  break;
+              }
+            },
+            onError: () => {
+              stopTick();
+              setStatus("error");
+              setError("YouTube 無法播放這個影片（可能受地區或版權限制）。");
+            },
+          },
+        });
+        playerRef.current = player;
+      } catch {
+        setStatus("error");
+        setError("無法載入 YouTube 播放器，請稍後再試。");
+      }
+    })();
+  }
+  startWithVideoIdRef.current = startWithVideoId;
 
   function handlePause() {
     playerRef.current?.pauseVideo();
@@ -286,16 +321,31 @@ export function SongPlayer({
         const player = playerRef.current;
         if (player) {
           player.seekTo(seconds, true);
-          if (status !== "playing") player.playVideo();
+          if (statusRef.current !== "playing") player.playVideo();
         }
       },
+      // Swap the source on demand: reset the current video, pick the requested
+      // variant, and load+play it. The "Generate karaoke" control uses this so
+      // the backing track starts the moment the button is clicked.
+      play: (variant) => {
+        reset();
+        karaokeRef.current = variant === "karaoke";
+        void handlePlayRef.current();
+      },
+      // Play a specific backing video the user picked from the ranked list.
+      playKaraokeVideo: (videoId) => {
+        reset();
+        karaokeRef.current = true;
+        startWithVideoIdRef.current(videoId);
+      },
     }),
-    [status],
+    [reset],
   );
 
   const isBusy = status === "resolving" || status === "loading";
   const isPlaying = status === "playing";
   const max = duration > 0 ? duration : 0;
+  const karaokeQuery = `${(splitTitle(title).song || title).trim()} カラオケ`;
 
   return (
     <div className="space-y-2">
@@ -306,7 +356,7 @@ export function SongPlayer({
         <div id={PLAYER_ELEMENT_ID} />
       </div>
 
-      <div className="flex items-center gap-3 rounded-2xl border border-border bg-surface p-3">
+      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-surface p-3">
         <Button
           type="button"
           variant="outline"
@@ -369,18 +419,37 @@ export function SongPlayer({
             aria-label="Volume"
           />
         </div>
+
+        <button
+          type="button"
+          onClick={onKaraokeAction}
+          className={cn(
+            "flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors",
+            karaoke
+              ? "border-primary/40 bg-primary/10 text-foreground hover:bg-primary/20"
+              : "border-border text-muted hover:text-foreground",
+          )}
+          title={
+            karaoke
+              ? "Switch back to the original vocal video"
+              : "Find backing-track (karaoke / off-vocal / piano) versions of this song"
+          }
+        >
+          {karaoke ? <Music2 className="size-3.5" /> : <Sparkles className="size-3.5" />}
+          {karaoke ? "Back to vocals" : "Find karaoke"}
+        </button>
       </div>
 
       {error ? (
         <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-danger">
           <span>{error}</span>
           <a
-            href={youtubeSearchUrl(title)}
+            href={youtubeSearchUrl(karaoke ? karaokeQuery : title)}
             target="_blank"
             rel="noreferrer"
             className="underline underline-offset-2 hover:text-foreground"
           >
-            在 YouTube 搜尋「{title}」
+            在 YouTube 搜尋「{karaoke ? karaokeQuery : title}」
           </a>
         </p>
       ) : null}

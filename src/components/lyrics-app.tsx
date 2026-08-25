@@ -3,8 +3,8 @@ import {
   ChevronRight,
   ExternalLink,
   Heart,
+  History,
   Loader2,
-  Menu,
   Minus,
   Music2,
   Plus,
@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RubyAssistMode } from "@/components/lyrics-display";
-import { SongHistorySidebar } from "@/components/song-history";
+import { LibraryDrawer, type LibraryView } from "@/components/song-history";
 import { SongPlayer } from "@/components/song-player";
 import type { SongPlayerHandle } from "@/components/song-player";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,13 @@ import { useSongFavorites } from "@/lib/lyrics/favorites";
 import { useSongHistory } from "@/lib/lyrics/history";
 import { fetchTimedLyrics } from "@/lib/lyrics/netease";
 import type { TimedLyricLine } from "@/lib/lyrics/netease";
+import { splitTitle } from "@/lib/lyrics/lrc";
+import {
+  karaokeConfidence,
+  searchKaraokeCandidates,
+  type KaraokeCandidate,
+  youtubeSearchUrl,
+} from "@/lib/lyrics/video";
 import { bindIme, setImeProtectedPrefix, unbindIme } from "@/lib/ime";
 import {
   buildUtaNetLyricsSearchUrl,
@@ -46,6 +53,25 @@ import { cn } from "@/lib/utils";
 const BAHAMUT_SAMPLE_URL = "https://home.gamer.com.tw/artwork.php?sn=6306141";
 const UTANET_SAMPLE_URL = "https://www.uta-net.com/song/397348/";
 const PAGE_SIZE = 10;
+
+const KARAOKE_KIND_LABEL: Record<KaraokeCandidate["kind"], string> = {
+  karaoke: "カラオケ",
+  "off-vocal": "オフボーカル",
+  instrumental: "インスト",
+  backing: "伴奏",
+  piano: "ピアノ",
+};
+
+/** Format a duration in seconds as "m:ss" (or "h:mm:ss" for >= 1 hour). */
+function formatDuration(seconds?: number): string | null {
+  if (!seconds || seconds <= 0 || !Number.isFinite(seconds)) return null;
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
 
 function pageWindow(page: number, total: number): Array<number | "…"> {
   if (total <= 7) {
@@ -217,11 +243,17 @@ export function LyricsApp() {
   const [syncStatus, setSyncStatus] = useState<"idle" | "loading" | "ok" | "none">("idle");
   const [currentTime, setCurrentTime] = useState(0);
   const [lyricOffset, setLyricOffset] = useState(0);
+  const [karaoke, setKaraoke] = useState(false);
+  const [karaokeGenerating, setKaraokeGenerating] = useState(false);
+  const [karaokeError, setKaraokeError] = useState<string | null>(null);
+  const [karaokeCandidates, setKaraokeCandidates] = useState<KaraokeCandidate[] | null>(null);
+  const [chosenKaraoke, setChosenKaraoke] = useState<KaraokeCandidate | null>(null);
+  const [showKaraokePicker, setShowKaraokePicker] = useState(false);
   const timedRequestRef = useRef(0);
   const songPlayerRef = useRef<SongPlayerHandle>(null);
   const history = useSongHistory();
   const favorites = useSongFavorites();
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [libraryView, setLibraryView] = useState<LibraryView | null>(null);
 
   const resultSource = result?.sourceUrl ?? null;
   const resultTitle = result?.title ?? "";
@@ -272,9 +304,9 @@ export function LyricsApp() {
   }, [toggleIme]);
 
   useEffect(() => {
-    if (!menuOpen) return;
+    if (!libraryView) return;
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setMenuOpen(false);
+      if (event.key === "Escape") setLibraryView(null);
     }
     window.addEventListener("keydown", onKeyDown);
     document.body.style.overflow = "hidden";
@@ -282,7 +314,7 @@ export function LyricsApp() {
       window.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = "";
     };
-  }, [menuOpen]);
+  }, [libraryView]);
 
   const songTotalPages = searchResult
     ? Math.max(1, Math.ceil(searchResult.results.length / PAGE_SIZE))
@@ -481,9 +513,49 @@ export function LyricsApp() {
     });
   }, [resultSource, resultTitle]);
 
+  // A new song starts on the original vocal by default; karaoke is opted in
+  // per song so a backing track isn't imposed on tracks that lack one.
+  useEffect(() => {
+    setKaraoke(false);
+    setKaraokeError(null);
+    setKaraokeCandidates(null);
+    setChosenKaraoke(null);
+    setShowKaraokePicker(false);
+  }, [resultSource]);
+
   const handleTimeChange = useCallback((seconds: number) => {
     setCurrentTime(seconds);
   }, []);
+
+  async function generateKaraoke() {
+    if (!result || karaokeGenerating) return;
+    setKaraokeError(null);
+    setKaraokeGenerating(true);
+    // Fetch every backing-track candidate ranked by confidence; let the user pick.
+    const candidates = await searchKaraokeCandidates(result.title).catch(() => []);
+    setKaraokeGenerating(false);
+    setKaraokeCandidates(candidates);
+    if (candidates.length === 0) {
+      setKaraoke(false);
+      setKaraokeError("找不到可用的卡拉OK／伴奏影片。");
+    }
+  }
+
+  function pickKaraoke(candidate: KaraokeCandidate) {
+    setKaraoke(true);
+    setChosenKaraoke(candidate);
+    setShowKaraokePicker(false);
+    setKaraokeError(null);
+    songPlayerRef.current?.playKaraokeVideo(candidate.videoId);
+  }
+
+  function backToVocals() {
+    setKaraoke(false);
+    setChosenKaraoke(null);
+    setShowKaraokePicker(false);
+    setKaraokeError(null);
+    songPlayerRef.current?.play("vocal");
+  }
 
   // With synced lyrics, clicking a line jumps the song back to that line.
   const handleLyricLineClick = useCallback(
@@ -520,18 +592,38 @@ export function LyricsApp() {
 
   return (
     <div className="flex w-full flex-col gap-10">
-      <div>
+      <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
-          onClick={() => setMenuOpen(true)}
-          aria-label="Open saved songs menu"
-          className="flex min-h-11 w-fit items-center gap-2 rounded-xl border border-border bg-surface px-3.5 text-sm font-medium text-foreground transition-colors hover:border-foreground/20"
+          onClick={() => setLibraryView("favorites")}
+          aria-label="Open favorites"
+          className="flex min-h-11 items-center gap-2 rounded-xl border border-border bg-surface px-3.5 text-sm font-medium text-foreground transition-colors hover:border-foreground/20"
         >
-          <Menu className="size-4 text-muted" strokeWidth={1.75} />
-          Saved songs
-          {favorites.favorites.length + history.records.length > 0 ? (
+          <Heart
+            className={cn(
+              "size-4",
+              favorites.favorites.length > 0 ? "fill-current text-danger" : "text-muted",
+            )}
+            strokeWidth={1.75}
+          />
+          Favorites
+          {favorites.favorites.length > 0 ? (
+            <span className="rounded-full bg-danger/15 px-2 py-0.5 text-xs font-semibold text-danger">
+              {favorites.favorites.length}
+            </span>
+          ) : null}
+        </button>
+        <button
+          type="button"
+          onClick={() => setLibraryView("history")}
+          aria-label="Open history"
+          className="flex min-h-11 items-center gap-2 rounded-xl border border-border bg-surface px-3.5 text-sm font-medium text-foreground transition-colors hover:border-foreground/20"
+        >
+          <History className="size-4 text-muted" strokeWidth={1.75} />
+          History
+          {history.records.length > 0 ? (
             <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-semibold text-primary-foreground">
-              {favorites.favorites.length + history.records.length}
+              {history.records.length}
             </span>
           ) : null}
         </button>
@@ -963,12 +1055,134 @@ export function LyricsApp() {
 
           {result ? (
             <div className="space-y-2">
-              <SongPlayer
-                sourceUrl={result.sourceUrl}
-                title={result.title}
-                onTimeChange={handleTimeChange}
-                ref={songPlayerRef}
-              />
+              <div className="relative">
+                <SongPlayer
+                  sourceUrl={result.sourceUrl}
+                  title={result.title}
+                  onTimeChange={handleTimeChange}
+                  karaoke={karaoke}
+                  onKaraokeAction={() => {
+                    if (karaoke) {
+                      backToVocals();
+                    } else {
+                      setShowKaraokePicker(true);
+                      void generateKaraoke();
+                    }
+                  }}
+                  ref={songPlayerRef}
+                />
+                {showKaraokePicker ? (
+                  <>
+                    <div
+                      className="fixed inset-0 z-20"
+                      onClick={() => setShowKaraokePicker(false)}
+                      aria-hidden="true"
+                    />
+                    <div className="absolute right-0 top-full z-30 mt-2 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-border bg-bg shadow-2xl">
+                      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2.5">
+                        <p className="text-sm font-medium text-foreground">
+                          Karaoke versions{" "}
+                          <span className="font-normal text-muted">— by confidence</span>
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setShowKaraokePicker(false)}
+                          aria-label="Close karaoke options"
+                          className="flex size-7 shrink-0 items-center justify-center rounded-lg text-subtle transition-colors hover:bg-surface-2 hover:text-foreground"
+                        >
+                          <X className="size-4" />
+                        </button>
+                      </div>
+                      <div className="max-h-80 overflow-y-auto p-2">
+                        {karaokeGenerating || !karaokeCandidates ? (
+                          <p className="flex items-center gap-2 px-2 py-3 text-xs text-muted">
+                            <Loader2 className="size-3.5 animate-spin" />
+                            Searching karaoke…
+                          </p>
+                        ) : karaokeCandidates.length === 0 ? (
+                          <p className="px-2 py-3 text-xs text-muted">
+                            No backing track found for this song.
+                          </p>
+                        ) : (
+                          <ul className="flex flex-col gap-1">
+                            {karaokeCandidates.map((candidate) => {
+                              const confidence = karaokeConfidence(candidate.score);
+                              return (
+                                <li key={candidate.videoId}>
+                                  <button
+                                    type="button"
+                                    onClick={() => pickKaraoke(candidate)}
+                                    className="flex w-full items-center gap-2 rounded-lg border border-border px-2.5 py-2 text-left transition-colors hover:border-foreground/25"
+                                  >
+                                    <span className="shrink-0 rounded-md border border-border px-1.5 py-0.5 text-[10px] font-semibold text-muted">
+                                      {KARAOKE_KIND_LABEL[candidate.kind]}
+                                    </span>
+                                    {candidate.official ? (
+                                      <span className="shrink-0 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                                        公式
+                                      </span>
+                                    ) : null}
+                                    <span className="min-w-0 flex-1 truncate text-xs text-foreground">
+                                      {candidate.title}
+                                    </span>
+                                    {formatDuration(candidate.duration) ? (
+                                      <span className="shrink-0 text-[10px] tabular-nums text-subtle">
+                                        {formatDuration(candidate.duration)}
+                                      </span>
+                                    ) : null}
+                                    <span
+                                      className={cn(
+                                        "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                                        confidence === "High"
+                                          ? "bg-primary/15 text-primary"
+                                          : confidence === "Medium"
+                                            ? "bg-surface-2 text-foreground"
+                                            : "bg-border text-muted",
+                                      )}
+                                    >
+                                      {confidence}
+                                    </span>
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+
+              {karaoke && chosenKaraoke ? (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+                  <Music2 className="size-3.5 shrink-0 text-primary" />
+                  <span className="max-w-72 truncate">{chosenKaraoke.title}</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowKaraokePicker(true)}
+                    className="inline-flex min-h-8 items-center gap-1 rounded-lg px-1.5 font-medium underline-offset-4 hover:text-foreground hover:underline"
+                  >
+                    Change version
+                  </button>
+                </div>
+              ) : null}
+
+              {karaokeError && !karaoke && !showKaraokePicker ? (
+                <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-danger">
+                  <span>{karaokeError}</span>
+                  <a
+                    href={youtubeSearchUrl(
+                      `${(splitTitle(result.title).song || result.title).trim()} カラオケ`,
+                    )}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline underline-offset-2 hover:text-foreground"
+                  >
+                    在 YouTube 搜尋 karaoke 版本
+                  </a>
+                </p>
+              ) : null}
               {syncStatus === "loading" ? (
                 <p className="flex items-center gap-2 text-xs text-muted">
                   <Loader2 className="size-3.5 animate-spin" />
@@ -1112,44 +1326,18 @@ export function LyricsApp() {
         </div>
       </div>
 
-      {menuOpen ? (
-        <div className="fixed inset-0 z-50">
-          <div
-            className="absolute inset-0 bg-black/40"
-            onClick={() => setMenuOpen(false)}
-            aria-hidden="true"
-          />
-          <aside
-            role="dialog"
-            aria-modal="true"
-            aria-label="Saved songs menu"
-            className="absolute inset-y-0 left-0 flex w-[min(30rem,92vw)] flex-col gap-4 overflow-y-auto border-r border-border bg-bg p-4 shadow-2xl"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="flex items-center gap-2 text-sm font-medium tracking-wide text-foreground">
-                <Menu className="size-4 text-muted" strokeWidth={1.75} />
-                Saved songs
-              </h2>
-              <button
-                type="button"
-                onClick={() => setMenuOpen(false)}
-                aria-label="Close saved songs menu"
-                className="flex size-9 items-center justify-center rounded-lg text-subtle transition-colors hover:bg-surface-2 hover:text-foreground"
-              >
-                <X className="size-5" />
-              </button>
-            </div>
-            <SongHistorySidebar
-              records={history.records}
-              favorites={favorites.favorites}
-              activeUrl={result?.sourceUrl ?? null}
-              onOpen={openRecord}
-              onRemove={history.remove}
-              onClear={history.clear}
-              onRemoveFavorite={favorites.remove}
-            />
-          </aside>
-        </div>
+      {libraryView ? (
+        <LibraryDrawer
+          view={libraryView}
+          favorites={favorites.favorites}
+          records={history.records}
+          activeUrl={result?.sourceUrl ?? null}
+          onOpen={openRecord}
+          onRemoveFavorite={favorites.remove}
+          onRemove={history.remove}
+          onClear={history.clear}
+          onClose={() => setLibraryView(null)}
+        />
       ) : null}
     </div>
   );

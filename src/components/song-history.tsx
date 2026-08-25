@@ -1,8 +1,9 @@
-import { useState } from "react";
-import { ChevronDown, Heart, History, X } from "lucide-react";
+import { Heart, History, X } from "lucide-react";
 import type { SongFavorite } from "@/lib/lyrics/favorites";
 import type { SongRecord } from "@/lib/lyrics/history";
 import { cn } from "@/lib/utils";
+
+export type LibraryView = "favorites" | "history";
 
 function hostOf(url: string): string {
   try {
@@ -23,166 +24,193 @@ function relativeTime(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString();
 }
 
-export function SongHistorySidebar({
-  records,
-  favorites,
-  activeUrl,
+function FavoriteItem({
+  favorite,
+  active,
   onOpen,
   onRemove,
-  onClear,
-  onRemoveFavorite,
 }: {
-  records: SongRecord[];
+  favorite: SongFavorite;
+  active: boolean;
+  onOpen: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <li className="flex items-stretch rounded-xl border border-border bg-surface transition-colors hover:border-foreground/20">
+      <button
+        type="button"
+        onClick={onOpen}
+        className={cn(
+          "flex min-w-0 flex-1 flex-col gap-0.5 rounded-l-xl px-3 py-2.5 text-left",
+          active && "border-l-2 border-l-danger pl-2.5",
+        )}
+      >
+        <span className="truncate text-sm font-medium text-foreground">{favorite.title}</span>
+        <span className="truncate text-xs text-muted">{hostOf(favorite.sourceUrl)}</span>
+      </button>
+      <button
+        type="button"
+        aria-label={`Remove ${favorite.title} from favorites`}
+        onClick={onRemove}
+        className="shrink-0 self-center px-2.5 py-2 text-danger transition-colors hover:text-foreground"
+      >
+        <Heart className="size-4 fill-current" />
+      </button>
+    </li>
+  );
+}
+
+function HistoryItem({
+  record,
+  active,
+  onOpen,
+  onRemove,
+}: {
+  record: SongRecord;
+  active: boolean;
+  onOpen: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <li className="flex items-stretch rounded-xl border border-border bg-surface transition-colors hover:border-foreground/20">
+      <button
+        type="button"
+        onClick={onOpen}
+        className={cn(
+          "flex min-w-0 flex-1 flex-col gap-0.5 rounded-l-xl px-3 py-2.5 text-left",
+          active && "border-l-2 border-l-primary pl-2.5",
+        )}
+      >
+        <span className="truncate text-sm font-medium text-foreground">{record.title}</span>
+        <span className="truncate text-xs text-muted">
+          {hostOf(record.sourceUrl)} · {relativeTime(record.fetchedAt)}
+        </span>
+      </button>
+      <button
+        type="button"
+        aria-label={`Remove ${record.title} from history`}
+        onClick={onRemove}
+        className="shrink-0 self-center px-2.5 py-2 text-subtle transition-colors hover:text-danger"
+      >
+        <X className="size-4" />
+      </button>
+    </li>
+  );
+}
+
+/**
+ * A single-library side drawer. Favorites and History are two separate
+ * concepts with their own entry point in the toolbar; this panel renders
+ * exactly one of them at a time.
+ */
+export function LibraryDrawer({
+  view,
+  favorites,
+  records,
+  activeUrl,
+  onOpen,
+  onRemoveFavorite,
+  onRemove,
+  onClear,
+  onClose,
+}: {
+  view: LibraryView;
   favorites: SongFavorite[];
+  records: SongRecord[];
   activeUrl: string | null;
   onOpen: (record: { sourceUrl: string }) => void;
+  onRemoveFavorite: (sourceUrl: string) => void;
   onRemove: (sourceUrl: string) => void;
   onClear: () => void;
-  onRemoveFavorite: (sourceUrl: string) => void;
+  onClose: () => void;
 }) {
-  const [favoritesOpen, setFavoritesOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const isFavorites = view === "favorites";
+  const heading = isFavorites ? "Favorites" : "History";
 
   return (
-    <aside className="flex w-full flex-col gap-3 lg:flex-row lg:items-start lg:gap-4">
-      <section className="flex min-w-0 flex-1 flex-col gap-2">
-        <div className="flex items-center justify-between gap-2">
-          <button
-            type="button"
-            aria-expanded={favoritesOpen}
-            onClick={() => setFavoritesOpen((open) => !open)}
-            className="flex min-h-9 flex-1 items-center gap-2 rounded-lg px-1 text-left text-sm font-medium tracking-wide text-foreground transition-colors hover:text-primary"
-          >
-            <Heart className="size-4 text-muted" strokeWidth={1.75} />
-            Favorites
-            {favorites.length > 0 ? (
-              <span className="text-xs text-muted">{favorites.length}</span>
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label={heading}
+        className="absolute inset-y-0 left-0 flex w-[min(30rem,92vw)] flex-col border-r border-border bg-bg p-4 shadow-2xl"
+      >
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h2 className="flex min-h-9 items-center gap-2 text-sm font-medium tracking-wide text-foreground">
+            {isFavorites ? (
+              <Heart className="size-4 text-danger" strokeWidth={1.75} />
+            ) : (
+              <History className="size-4 text-muted" strokeWidth={1.75} />
+            )}
+            {heading}
+            {isFavorites ? (
+              favorites.length > 0 ? (
+                <span className="text-xs text-muted">{favorites.length}</span>
+              ) : null
+            ) : records.length > 0 ? (
+              <span className="text-xs text-muted">{records.length}</span>
             ) : null}
-            <ChevronDown
-              className={cn(
-                "ml-auto size-4 text-muted transition-transform duration-150",
-                favoritesOpen && "rotate-180",
-              )}
-            />
-          </button>
+          </h2>
+          <div className="flex items-center gap-1">
+            {!isFavorites && records.length > 0 ? (
+              <button
+                type="button"
+                onClick={onClear}
+                className="min-h-8 px-1.5 text-xs text-muted underline-offset-4 transition-colors hover:text-danger hover:underline"
+              >
+                Clear all
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label={`Close ${heading}`}
+              className="flex size-9 items-center justify-center rounded-lg text-subtle transition-colors hover:bg-surface-2 hover:text-foreground"
+            >
+              <X className="size-5" />
+            </button>
+          </div>
         </div>
 
-        {favoritesOpen ? (
+        {isFavorites ? (
           favorites.length === 0 ? (
-            <p className="rounded-2xl border border-border bg-surface px-4 py-3 text-sm leading-relaxed text-muted">
+            <p className="rounded-2xl border border-dashed border-border bg-surface px-4 py-3 text-sm leading-relaxed text-muted">
               No favorites yet — tap the heart on a song to save it here.
             </p>
           ) : (
-            <ul className="flex flex-col gap-2">
+            <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
               {favorites.map((favorite) => (
-                <li
+                <FavoriteItem
                   key={favorite.sourceUrl}
-                  className="flex items-stretch rounded-xl border border-border bg-surface transition-colors hover:border-foreground/20"
-                >
-                  <button
-                    type="button"
-                    onClick={() => onOpen(favorite)}
-                    className={cn(
-                      "flex min-w-0 flex-1 flex-col gap-0.5 rounded-l-xl px-3 py-2.5 text-left",
-                      activeUrl === favorite.sourceUrl && "border-l-2 border-l-primary pl-2.5",
-                    )}
-                  >
-                    <span className="truncate text-sm font-medium text-foreground">
-                      {favorite.title}
-                    </span>
-                    <span className="truncate text-xs text-muted">
-                      {hostOf(favorite.sourceUrl)}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Remove ${favorite.title} from favorites`}
-                    onClick={() => onRemoveFavorite(favorite.sourceUrl)}
-                    className="shrink-0 self-center px-2 py-2 text-subtle hover:text-danger"
-                  >
-                    <Heart className="size-4 fill-current" />
-                  </button>
-                </li>
+                  favorite={favorite}
+                  active={activeUrl === favorite.sourceUrl}
+                  onOpen={() => onOpen(favorite)}
+                  onRemove={() => onRemoveFavorite(favorite.sourceUrl)}
+                />
               ))}
             </ul>
           )
-        ) : null}
-      </section>
-
-      <section className="flex min-w-0 flex-1 flex-col gap-2">
-        <div className="flex items-center justify-between gap-2">
-          <button
-            type="button"
-            aria-expanded={historyOpen}
-            onClick={() => setHistoryOpen((open) => !open)}
-            className="flex min-h-9 flex-1 items-center gap-2 rounded-lg px-1 text-left text-sm font-medium tracking-wide text-foreground transition-colors hover:text-primary"
-          >
-            <History className="size-4 text-muted" strokeWidth={1.75} />
-            History
-            {records.length > 0 ? (
-              <span className="text-xs text-muted">{records.length}</span>
-            ) : null}
-            <ChevronDown
-              className={cn(
-                "ml-auto size-4 text-muted transition-transform duration-150",
-                historyOpen && "rotate-180",
-              )}
-            />
-          </button>
-          {records.length > 0 ? (
-            <button
-              type="button"
-              onClick={onClear}
-              className="min-h-8 px-1 text-xs text-muted underline-offset-4 hover:text-danger hover:underline"
-            >
-              Clear all
-            </button>
-          ) : null}
-        </div>
-
-        {historyOpen ? (
-          records.length === 0 ? (
-            <div className="rounded-2xl border border-border bg-surface px-4 py-6 text-center text-sm leading-relaxed text-muted">
-              No songs fetched yet.
-              <br />
-              Fetched songs appear here.
-            </div>
-          ) : (
-            <ul className="flex flex-col gap-2 lg:max-h-[calc(100dvh-10rem)] lg:overflow-y-auto lg:pr-1">
-              {records.map((record) => (
-                <li
-                  key={record.sourceUrl}
-                  className="flex items-stretch rounded-xl border border-border bg-surface transition-colors hover:border-foreground/20"
-                >
-                  <button
-                    type="button"
-                    onClick={() => onOpen(record)}
-                    className={cn(
-                      "flex min-w-0 flex-1 flex-col gap-0.5 rounded-l-xl px-3 py-2.5 text-left",
-                      activeUrl === record.sourceUrl && "border-l-2 border-l-primary pl-2.5",
-                    )}
-                  >
-                    <span className="truncate text-sm font-medium text-foreground">
-                      {record.title}
-                    </span>
-                    <span className="truncate text-xs text-muted">
-                      {hostOf(record.sourceUrl)} · {relativeTime(record.fetchedAt)}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Remove ${record.title}`}
-                    onClick={() => onRemove(record.sourceUrl)}
-                    className="shrink-0 self-center px-2 py-2 text-subtle hover:text-danger"
-                  >
-                    <X className="size-4" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )
-        ) : null}
-      </section>
-    </aside>
+        ) : records.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-border bg-surface px-4 py-6 text-center text-sm leading-relaxed text-muted">
+            No songs fetched yet.
+            <br />
+            Songs you open will appear here.
+          </div>
+        ) : (
+          <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
+            {records.map((record) => (
+              <HistoryItem
+                key={record.sourceUrl}
+                record={record}
+                active={activeUrl === record.sourceUrl}
+                onOpen={() => onOpen(record)}
+                onRemove={() => onRemove(record.sourceUrl)}
+              />
+            ))}
+          </ul>
+        )}
+      </aside>
+    </div>
   );
 }
