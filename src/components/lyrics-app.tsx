@@ -765,17 +765,25 @@ export function LyricsApp() {
   // Merge the host-computed word timings into the synced lyric lines: token
   // times drive word-by-word highlighting, and the line start/end become the
   // Whisper-aligned ones — so line sync follows the actual audio (the manual
-  // NetEase offset is no longer needed for aligned songs).
+  // NetEase offset is no longer needed for aligned songs). When NetEase has no
+  // timestamps, the Whisper-generated ones are used directly.
   const syncLines = useMemo(() => {
-    if (!timedLines || timedLines.length === 0 || !stemTimings) return timedLines;
+    if (!stemTimings) {
+      return timedLines && timedLines.length > 0 ? timedLines : null;
+    }
     const byIndex = new Map(stemTimings.lines.map((line) => [line.index, line]));
-    let changed = false;
-    const merged = timedLines.map((line, i) => {
+    if (byIndex.size === 0) {
+      return timedLines && timedLines.length > 0 ? timedLines : null;
+    }
+    const source = timedLines && timedLines.length > 0 ? timedLines : (result?.lines ?? []);
+    if (source.length === 0) return null;
+    const merged: TimedLyricLine[] = [];
+    for (let i = 0; i < source.length; i++) {
+      const line = source[i];
       const t = byIndex.get(i);
       if (!t || t.text !== line.text || t.char_times.length !== line.text.length) {
-        return line;
+        return timedLines && timedLines.length > 0 ? timedLines : null;
       }
-      changed = true;
       let offset = 0;
       const tokens = line.tokens.map((token) => {
         const len = token.text.length;
@@ -784,10 +792,10 @@ export function LyricsApp() {
         offset += len;
         return { ...token, start, end };
       });
-      return { ...line, tokens, start: t.start, end: t.end };
-    });
-    return changed ? merged : timedLines;
-  }, [timedLines, stemTimings]);
+      merged.push({ ...line, tokens, start: t.start, end: t.end });
+    }
+    return merged;
+  }, [timedLines, stemTimings, result?.lines]);
 
   // With synced lyrics, clicking a line jumps the song back to that line.
   const handleLyricLineClick = useCallback(
@@ -801,7 +809,7 @@ export function LyricsApp() {
   // Binary-search the timed line that contains the current playback position
   // (with the user-adjustable offset applied).
   const activeIndex = useMemo(() => {
-    if (syncStatus !== "ok" || !syncLines || syncLines.length === 0) return null;
+    if (!syncLines || syncLines.length === 0) return null;
     const t = currentTime + lyricOffset;
     if (t < syncLines[0].start) return -1;
     if (t >= syncLines[syncLines.length - 1].start) {
@@ -815,7 +823,7 @@ export function LyricsApp() {
       else hi = mid - 1;
     }
     return lo;
-  }, [syncStatus, syncLines, currentTime, lyricOffset]);
+  }, [syncLines, currentTime, lyricOffset]);
 
   const displayLines = syncLines && syncLines.length > 0 ? syncLines : (result?.lines ?? []);
   // Before playback starts there is nothing to highlight; only dim lines once
@@ -1461,7 +1469,7 @@ export function LyricsApp() {
                   <Loader2 className="size-3.5 animate-spin" />
                   {t("sync.loading")}
                 </p>
-              ) : syncStatus === "ok" ? (
+              ) : syncStatus === "ok" || stemTimings ? (
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-border bg-surface px-3 py-2 text-xs text-muted">
                   <span className="flex items-center gap-1.5">
                     <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
@@ -1509,7 +1517,7 @@ export function LyricsApp() {
                     </span>
                   </div>
                 </div>
-              ) : syncStatus === "none" ? (
+              ) : syncStatus === "none" && !stemTimings ? (
                 <p className="text-xs text-muted">{t("sync.none")}</p>
               ) : null}
             </div>
@@ -1578,9 +1586,7 @@ export function LyricsApp() {
                     displayActiveIndex != null ? currentTime + lyricOffset : undefined
                   }
                   onLineClick={
-                    syncStatus === "ok" && syncLines && syncLines.length > 0
-                      ? handleLyricLineClick
-                      : undefined
+                    syncLines && syncLines.length > 0 ? handleLyricLineClick : undefined
                   }
                   showFurigana={showFurigana}
                   katakanaAid={katakanaAid}
