@@ -1,5 +1,6 @@
 import {
   Loader2,
+  Mic,
   Music2,
   Pause,
   Play,
@@ -204,9 +205,11 @@ export function SongPlayer({
   // The generated off-vocal stem plays from a page-owned <audio> element (the
   // YouTube embed's audio is unreachable by the page).
   const audioElRef = useRef<HTMLAudioElement | null>(null);
-  // Auto-generated off-vocal stem: the single page-owned file we play.
-  const [stemUrl, setStemUrl] = useState<string | null>(null);
+  // Auto-generated stem: the full mix + off-vocal files we swap between at
+  // the same timestamp (karaoke plays off-vocal by default, vocals optional).
+  const [stemFiles, setStemFiles] = useState<{ full: string; vocals: string } | null>(null);
   const [stemActive, setStemActive] = useState(false);
+  const [vocalOn, setVocalOn] = useState(false);
   const audioMode = stemActive;
   const audioModeRef = useRef(audioMode);
   audioModeRef.current = audioMode;
@@ -266,8 +269,9 @@ export function SongPlayer({
       a.removeAttribute("src");
       a.load();
     }
-    setStemUrl(null);
+    setStemFiles(null);
     setStemActive(false);
+    setVocalOn(false);
   }, [stopTick]);
 
   useEffect(() => {
@@ -481,25 +485,38 @@ export function SongPlayer({
   // ---- Auto-detected off-vocal stem: adopt it when the service reports ready ----
   useEffect(() => {
     if (stems?.state === "ready") {
-      setStemUrl(stems.vocals);
+      setStemFiles({ full: stems.full, vocals: stems.vocals });
     } else {
-      setStemUrl(null);
+      setStemFiles(null);
       setStemActive(false);
     }
-  }, [stems?.state, stems?.vocals]);
+  }, [stems?.state, stems?.full, stems?.vocals]);
 
-  // The generated off-vocal IS the karaoke track (no vocal toggle anymore):
-  // load and play it as soon as it's ready.
+  // Play the stem as soon as it's ready — the off-vocal (karaoke) by default,
+  // or the full mix once the user has switched vocals on.
   useEffect(() => {
-    if (!stemUrl || stemActive) return;
+    if (!stemFiles || stemActive) return;
     const a = audioElRef.current;
     if (a) {
-      a.src = stemUrl;
+      a.src = vocalOn ? stemFiles.full : stemFiles.vocals;
       a.load();
       a.play().catch(() => {});
     }
     setStemActive(true);
-  }, [stemUrl, stemActive]);
+  }, [stemFiles, stemActive, vocalOn]);
+
+  function toggleVocal() {
+    const a = audioElRef.current;
+    if (!stemFiles || !a) return;
+    // Swap between the full mix (vocals on) and the off-vocal stem at the
+    // same timestamp — both are the same recording, so alignment holds.
+    const t = a.currentTime;
+    a.src = vocalOn ? stemFiles.vocals : stemFiles.full;
+    a.load();
+    a.play().catch(() => {});
+    a.currentTime = t;
+    setVocalOn(!vocalOn);
+  }
 
   function handlePause() {
     if (audioMode) {
@@ -664,9 +681,31 @@ export function SongPlayer({
             </span>
           ) : null}
           {stemActive ? (
-            <span className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/5 px-2 py-1 text-[10px] font-medium text-primary">
-              <Music2 className="size-3" /> Off-vocal
-            </span>
+            <>
+              <button
+                type="button"
+                onClick={toggleVocal}
+                className={cn(
+                  "flex h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors",
+                  vocalOn
+                    ? "border-primary/40 bg-primary/10 text-foreground hover:bg-primary/20"
+                    : "border-border text-muted hover:text-foreground",
+                )}
+                title={
+                  vocalOn
+                    ? "Switch to the off-vocal (karaoke) version"
+                    : "Switch back to the version with vocals"
+                }
+              >
+                <Mic className="size-3.5" />
+                {vocalOn ? "Vocals off" : "Vocals on"}
+              </button>
+              {!vocalOn ? (
+                <span className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/5 px-2 py-1 text-[10px] font-medium text-primary">
+                  <Music2 className="size-3" /> Off-vocal
+                </span>
+              ) : null}
+            </>
           ) : null}
         </div>
 
