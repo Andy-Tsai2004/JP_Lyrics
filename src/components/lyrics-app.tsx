@@ -1363,7 +1363,7 @@ export function LyricsApp() {
                     <button
                       type="button"
                       onClick={() =>
-                        setLyricOffset((v) => Math.max(-5, Math.round((v - 0.25) * 100) / 100))
+                        setLyricOffset((v) => Math.max(-15, Math.round((v - 0.25) * 100) / 100))
                       }
                       aria-label="Decrease lyric offset by 0.25 seconds"
                       className="flex size-7 items-center justify-center rounded-md border border-border text-muted transition-colors hover:text-foreground"
@@ -1372,8 +1372,8 @@ export function LyricsApp() {
                     </button>
                     <input
                       type="range"
-                      min={-5}
-                      max={5}
+                      min={-15}
+                      max={15}
                       step={0.25}
                       value={lyricOffset}
                       onChange={(e) => setLyricOffset(Number(e.target.value))}
@@ -1383,7 +1383,7 @@ export function LyricsApp() {
                     <button
                       type="button"
                       onClick={() =>
-                        setLyricOffset((v) => Math.min(5, Math.round((v + 0.25) * 100) / 100))
+                        setLyricOffset((v) => Math.min(15, Math.round((v + 0.25) * 100) / 100))
                       }
                       aria-label="Increase lyric offset by 0.25 seconds"
                       className="flex size-7 items-center justify-center rounded-md border border-border text-muted transition-colors hover:text-foreground"
