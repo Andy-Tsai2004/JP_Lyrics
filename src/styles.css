@@ -58,6 +58,23 @@
   letter-spacing: 0.02em;
 }
 
+/* Smooth karaoke fill for the active lyric line: the text colour glides from
+ * subtle (unsung) to foreground as playback progresses through the line.
+ * `--karaoke-progress` is a percentage (0% = line start, 100% = line end). */
+.karaoke-fill {
+  background-image: linear-gradient(
+    to right,
+    var(--color-subtle) 50%,
+    var(--color-foreground) 50%
+  );
+  background-size: 200% 100%;
+  background-position: var(--karaoke-progress, 0%) 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  transition: background-position 250ms linear;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

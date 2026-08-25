@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef } from "react";
 import { containsKatakana, katakanaToHiragana, katakanaToRomaji } from "@/lib/lyrics/kana";
 import type { LyricLine } from "@/lib/lyrics/types";
@@ -126,8 +126,16 @@ function WordLine({
   rubyAssistMode: RubyAssistMode;
   fontSizeRem: number;
 }) {
-  const timedLine = isActiveLine && line.tokens.some((token) => token.start != null);
-  const renderTokens = showFurigana || timedLine;
+  const renderTokens = showFurigana;
+  const canFill =
+    isActiveLine &&
+    line.start != null &&
+    line.end != null &&
+    line.end > line.start;
+  const progress =
+    canFill && activeTime != null
+      ? Math.max(0, Math.min(1, (activeTime - line.start!) / (line.end! - line.start!)))
+      : 0;
   return (
     <p
       aria-current={isActiveLine ? "true" : undefined}
@@ -156,15 +164,17 @@ function WordLine({
         lineHeight: showFurigana ? 1.74 : 1.62,
       }}
     >
-      {renderTokens
-        ? line.tokens.map((token, j) => {
-            const timed = timedLine && activeTime != null && token.start != null;
-            const sung = timed && activeTime >= token.start!;
-            return (
-              <span
-                key={j}
-                className={timed ? (sung ? "text-foreground" : "text-subtle") : undefined}
-              >
+      <span
+        className={cn(canFill && "karaoke-fill")}
+        style={
+          canFill
+            ? ({ "--karaoke-progress": `${progress * 100}%` } as CSSProperties)
+            : undefined
+        }
+      >
+        {renderTokens
+          ? line.tokens.map((token, j) => (
+              <span key={j}>
                 {showFurigana && token.furigana ? (
                   <ruby className="ruby-token">
                     {token.text}
@@ -176,9 +186,9 @@ function WordLine({
                   token.text
                 )}
               </span>
-            );
-          })
-        : line.text}
+            ))
+          : line.text}
+      </span>
     </p>
   );
 }
