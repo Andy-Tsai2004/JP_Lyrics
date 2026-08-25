@@ -714,11 +714,6 @@ export function SongPlayer({
                 <Mic className="size-3.5" />
                 {vocalOn ? "Vocals off" : "Vocals on"}
               </button>
-              {!vocalOn ? (
-                <span className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/5 px-2 py-1 text-[10px] font-medium text-primary">
-                  <Music2 className="size-3" /> Off-vocal
-                </span>
-              ) : null}
             </>
           ) : null}
         </div>
