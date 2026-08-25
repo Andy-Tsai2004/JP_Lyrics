@@ -25,6 +25,7 @@ stems_cache/
 .service.pid
 .tunnel.pid
 .tunnel-url
+__pycache__/
 
 .DS_Store
 Thumbs.db
