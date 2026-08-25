@@ -64,11 +64,11 @@
 .karaoke-fill {
   background-image: linear-gradient(
     to right,
-    var(--color-subtle) 50%,
-    var(--color-foreground) 50%
+    var(--color-foreground) 50%,
+    var(--color-subtle) 50%
   );
   background-size: 200% 100%;
-  background-position: var(--karaoke-progress, 0%) 0;
+  background-position: calc(100% - var(--karaoke-progress, 0%)) 0;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
