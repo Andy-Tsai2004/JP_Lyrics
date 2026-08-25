@@ -9,6 +9,7 @@ import {
   Music2,
   Plus,
   Search,
+  Sparkles,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RubyAssistMode } from "@/components/lyrics-display";
@@ -270,20 +271,8 @@ export function LyricsApp() {
       const reqId = ++stemRequestRef.current;
       const lines = lyricLinesRef.current;
       let st = await getStemStatus(id);
-      if (trigger && st?.state === "unknown") st = await requestStem(sourceUrl, lines);
+      if (trigger && st?.state === "unknown") st = await requestStem(sourceUrl);
       if (reqId !== stemRequestRef.current) return; // song changed / re-triggered
-      // Audio exists but no word timings yet — ask the host to align (once).
-      if (
-        lines.length > 0 &&
-        st &&
-        (st.state === "ready" || st.state === "generating") &&
-        st.timings !== "ready" &&
-        st.timings !== "pending" &&
-        st.timings !== "error"
-      ) {
-        st = await requestStem(sourceUrl, lines);
-      }
-      if (reqId !== stemRequestRef.current) return;
       if (st?.state === "ready") {
         setStems(st);
         if (lines.length > 0 && st.timings === "ready") {
@@ -309,6 +298,24 @@ export function LyricsApp() {
     },
     [],
   );
+
+  /** Manually start word-timestamp alignment for the current song. */
+  const startAlignment = useCallback(() => {
+    const sourceUrl = result?.sourceUrl ?? "";
+    const id = utaNetSongId(sourceUrl);
+    if (!id) return;
+    const reqId = ++stemRequestRef.current;
+    void (async () => {
+      const st = await requestStem(sourceUrl, lyricLinesRef.current);
+      if (reqId !== stemRequestRef.current) return;
+      if (st?.state === "ready") {
+        setStems(st);
+        setTimeout(() => {
+          if (reqId === stemRequestRef.current) void pollStem(sourceUrl, false);
+        }, 4000);
+      }
+    })();
+  }, [result?.sourceUrl, pollStem]);
 
   useEffect(() => {
     setStemsAvailable(null);
@@ -1195,6 +1202,20 @@ export function LyricsApp() {
                   <Loader2 className="size-3.5 animate-spin" />
                   Aligning word timestamps…
                 </p>
+              ) : null}
+              {stems?.state === "ready" &&
+              stems.timings !== "ready" &&
+              stems.timings !== "pending" &&
+              ((timedLines && timedLines.length > 0) || (result?.lines ?? []).length > 0) ? (
+                <button
+                  type="button"
+                  onClick={startAlignment}
+                  className="flex h-9 items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-3 text-xs font-medium text-foreground transition-colors hover:bg-primary/20"
+                  title="Align the lyric lines to the song audio with Whisper — takes about 1-2 minutes"
+                >
+                  <Sparkles className="size-3.5" />
+                  Align word timestamps
+                </button>
               ) : null}
 
               {karaokeError && !karaoke && !showKaraokePicker ? (
