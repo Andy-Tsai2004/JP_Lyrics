@@ -554,10 +554,15 @@ export function SongPlayer({
   function handleVolumeChange(value: number) {
     setVolume(value);
     playerRef.current?.setVolume(value);
+    // The off-vocal stem plays from the page-owned <audio> element — keep its
+    // volume in sync too.
+    const a = audioElRef.current;
+    if (a) a.volume = value / 100;
     // Dragging the slider always restores audible output.
     if (muted) {
       setMuted(false);
       playerRef.current?.unMute();
+      if (a) a.muted = false;
     }
   }
 
@@ -566,6 +571,8 @@ export function SongPlayer({
     setMuted(next);
     if (next) playerRef.current?.mute();
     else playerRef.current?.unMute();
+    const a = audioElRef.current;
+    if (a) a.muted = next;
   }
 
   // Expose an external seek so lyric lines can jump the song back to a line's
@@ -683,7 +690,7 @@ export function SongPlayer({
             step={1}
             value={muted ? 0 : volume}
             onChange={(e) => handleVolumeChange(Number(e.target.value))}
-            disabled={!playerRef.current}
+            disabled={!playerRef.current && !audioMode}
             className="h-1.5 w-16 accent-primary sm:w-20 disabled:cursor-default disabled:opacity-40"
             aria-label="Volume"
           />
