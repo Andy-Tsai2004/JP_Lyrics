@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  ChevronDown,
   ChevronRight,
   ExternalLink,
   Heart,
@@ -209,6 +210,9 @@ export function LyricsApp() {
   const [songPage, setSongPage] = useState(1);
   const [artistPage, setArtistPage] = useState(1);
   const [artistResults, setArtistResults] = useState<UtaNetArtistResult[] | null>(null);
+  // After opening a song, the result list collapses into a dropdown; a new
+  // search re-expands it.
+  const [resultsCollapsed, setResultsCollapsed] = useState(false);
   const [artistSongs, setArtistSongs] = useState<{
     artistUrl: string;
     artist: string;
@@ -589,14 +593,23 @@ export function LyricsApp() {
   }
 
   function openSearchResult(result: UtaNetSearchResult) {
+    setResultsCollapsed(true);
+    setArtistSongs(null);
     setUrl(result.songUrl);
     void runFetch(result.songUrl);
   }
 
   function openRecord(record: { sourceUrl: string }) {
+    setResultsCollapsed(true);
+    setArtistSongs(null);
     setUrl(record.sourceUrl);
     void runFetch(record.sourceUrl);
   }
+
+  // A brand-new search always shows the fresh results.
+  useEffect(() => {
+    if (searchResult || artistResults) setResultsCollapsed(false);
+  }, [searchResult, artistResults]);
 
   // When a Uta-Net song loads, try to resolve synced lyrics (LRC) from
   // NetEase. Fallback is the plain Uta-Net text already fetched above.
@@ -986,6 +999,30 @@ export function LyricsApp() {
                   </div>
                 ) : searchResult || artistResults ? (
                   <div className="mt-3 border-t border-border pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setResultsCollapsed((v) => !v)}
+                      aria-expanded={!resultsCollapsed}
+                      className="mb-2 flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm font-medium text-foreground transition-colors hover:border-foreground/20"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        {resultsCollapsed ? (
+                          <ChevronRight className="size-4 text-subtle" />
+                        ) : (
+                          <ChevronDown className="size-4 text-subtle" />
+                        )}
+                        Search results
+                        <span className="text-xs font-normal text-muted">
+                          ({searchResult?.results.length ?? 0} songs
+                          {artistResults && artistResults.length > 0
+                            ? `, ${artistResults.length} artists`
+                            : ""}
+                          )
+                        </span>
+                      </span>
+                    </button>
+                    {!resultsCollapsed ? (
+                      <>
                     {searchResult ? (
                       <>
                         {searchResult.results.length === 0 ? (
@@ -1077,6 +1114,8 @@ export function LyricsApp() {
                           onChange={setArtistPage}
                         />
                       </div>
+                    ) : null}
+                      </>
                     ) : null}
                   </div>
                 ) : null}
