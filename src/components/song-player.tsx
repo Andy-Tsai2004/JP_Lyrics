@@ -427,6 +427,18 @@ export function SongPlayer({
 
   /** Resolve (or reuse) the id for the current variant and switch to it. */
   async function playCurrent() {
+    // Picking a YouTube version (karaoke picker / back-to-vocals) takes over
+    // from any page-owned stem audio — stop it first so the two never overlap.
+    if (audioModeRef.current) {
+      const a = audioElRef.current;
+      if (a) {
+        a.pause();
+        a.removeAttribute("src");
+        a.load();
+      }
+      setStemActive(false);
+      setStemFiles(null);
+    }
     const target = sourceRef.current;
     const mode = karaokeRef.current;
     // A cached id means the switch can happen instantly — skip the spinner.
@@ -718,28 +730,27 @@ export function SongPlayer({
           ) : null}
         </div>
 
-        {!audioMode ? (
-          <div className="relative flex shrink-0 items-center gap-2">
-            {chosenKaraokeTitle ? (
-              <button
-                type="button"
-                onClick={karaoke ? onBackToVocals : onBackToKaraoke}
-                className={cn(
-                  "flex h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors",
-                  karaoke
-                    ? "border-primary/40 bg-primary/10 text-foreground hover:bg-primary/20"
-                    : "border-border text-muted hover:text-foreground",
-                )}
-                title={
-                  karaoke
-                    ? "Switch back to the original vocal video"
-                    : "Switch back to the chosen karaoke version"
-                }
-              >
-                <Music2 className="size-3.5" />
-                {karaoke ? "Back to vocals" : "Back to karaoke"}
-              </button>
-            ) : null}
+        <div className="relative flex shrink-0 items-center gap-2">
+          {chosenKaraokeTitle && !audioMode ? (
+            <button
+              type="button"
+              onClick={karaoke ? onBackToVocals : onBackToKaraoke}
+              className={cn(
+                "flex h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors",
+                karaoke
+                  ? "border-primary/40 bg-primary/10 text-foreground hover:bg-primary/20"
+                  : "border-border text-muted hover:text-foreground",
+              )}
+              title={
+                karaoke
+                  ? "Switch back to the original vocal video"
+                  : "Switch back to the chosen karaoke version"
+              }
+            >
+              <Music2 className="size-3.5" />
+              {karaoke ? "Back to vocals" : "Back to karaoke"}
+            </button>
+          ) : null}
 
             <button
               type="button"
@@ -832,8 +843,7 @@ export function SongPlayer({
                 </div>
               </>
             ) : null}
-          </div>
-        ) : null}
+        </div>
 
         {!audioMode && chosenKaraokeTitle ? (
           <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted">
