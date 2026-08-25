@@ -9,7 +9,6 @@ import {
   Music2,
   Plus,
   Search,
-  X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RubyAssistMode } from "@/components/lyrics-display";
@@ -26,7 +25,6 @@ import { fetchTimedLyrics } from "@/lib/lyrics/netease";
 import type { TimedLyricLine } from "@/lib/lyrics/netease";
 import { splitTitle } from "@/lib/lyrics/lrc";
 import {
-  karaokeConfidence,
   searchKaraokeCandidates,
   type KaraokeCandidate,
   youtubeSearchUrl,
@@ -49,29 +47,11 @@ import {
 } from "@/lib/lyrics/search";
 import type { LyricsResult } from "@/lib/lyrics/types";
 import { cn } from "@/lib/utils";
+import { getStemStatus, requestStem, utaNetSongId, type StemInfo } from "@/lib/stems";
 
 const BAHAMUT_SAMPLE_URL = "https://home.gamer.com.tw/artwork.php?sn=6306141";
 const UTANET_SAMPLE_URL = "https://www.uta-net.com/song/397348/";
 const PAGE_SIZE = 10;
-
-const KARAOKE_KIND_LABEL: Record<KaraokeCandidate["kind"], string> = {
-  karaoke: "カラオケ",
-  "off-vocal": "オフボーカル",
-  instrumental: "インスト",
-  backing: "伴奏",
-  piano: "ピアノ",
-};
-
-/** Format a duration in seconds as "m:ss" (or "h:mm:ss" for >= 1 hour). */
-function formatDuration(seconds?: number): string | null {
-  if (!seconds || seconds <= 0 || !Number.isFinite(seconds)) return null;
-  const total = Math.round(seconds);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
 
 function pageWindow(page: number, total: number): Array<number | "…"> {
   if (total <= 7) {
@@ -254,9 +234,47 @@ export function LyricsApp() {
   const history = useSongHistory();
   const favorites = useSongFavorites();
   const [libraryView, setLibraryView] = useState<LibraryView | null>(null);
+  // Auto-detected off-vocal stem (from the generator service) for the loaded song.
+  const [stems, setStems] = useState<StemInfo | null>(null);
 
   const resultSource = result?.sourceUrl ?? null;
   const resultTitle = result?.title ?? "";
+
+  // When a Uta-Net song loads, ask the stem generator whether an off-vocal
+  // version is ready; if not, trigger generation and poll until it is (or the
+  // service is unreachable — then we fall back to the manual upload path).
+  useEffect(() => {
+    setStems(null);
+    const sourceUrl = result?.sourceUrl ?? "";
+    if (!sourceUrl || !utaNetSongId(sourceUrl)) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const poll = async (first: boolean) => {
+      const id = utaNetSongId(sourceUrl)!;
+      let st = await getStemStatus(id);
+      if (first && st?.state === "unknown") st = await requestStem(sourceUrl);
+      if (cancelled) return;
+      if (st?.state === "ready") {
+        setStems(st);
+        return;
+      }
+      if (st?.state === "generating") {
+        setStems({ state: "generating" });
+        timer = setTimeout(() => void poll(false), 4000);
+        return;
+      }
+      if (st?.state === "error") {
+        setStems(null);
+        return;
+      }
+      setStems(null);
+    };
+    void poll(true);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [result?.sourceUrl]);
 
   const setIme = useCallback((next: boolean) => {
     imeEnabledRef.current = next;
@@ -551,10 +569,18 @@ export function LyricsApp() {
 
   function backToVocals() {
     setKaraoke(false);
-    setChosenKaraoke(null);
+    // Keep the chosen version so the toggle can switch back seamlessly.
     setShowKaraokePicker(false);
     setKaraokeError(null);
     songPlayerRef.current?.play("vocal");
+  }
+
+  function backToKaraoke() {
+    if (!chosenKaraoke) return;
+    setKaraoke(true);
+    setShowKaraokePicker(false);
+    setKaraokeError(null);
+    songPlayerRef.current?.playKaraokeVideo(chosenKaraoke.videoId);
   }
 
   // With synced lyrics, clicking a line jumps the song back to that line.
@@ -1055,118 +1081,26 @@ export function LyricsApp() {
 
           {result ? (
             <div className="space-y-2">
-              <div className="relative">
-                <SongPlayer
-                  sourceUrl={result.sourceUrl}
-                  title={result.title}
-                  onTimeChange={handleTimeChange}
-                  karaoke={karaoke}
-                  onKaraokeAction={() => {
-                    if (karaoke) {
-                      backToVocals();
-                    } else {
-                      setShowKaraokePicker(true);
-                      void generateKaraoke();
-                    }
-                  }}
-                  ref={songPlayerRef}
-                />
-                {showKaraokePicker ? (
-                  <>
-                    <div
-                      className="fixed inset-0 z-20"
-                      onClick={() => setShowKaraokePicker(false)}
-                      aria-hidden="true"
-                    />
-                    <div className="absolute right-0 top-full z-30 mt-2 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-border bg-bg shadow-2xl">
-                      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2.5">
-                        <p className="text-sm font-medium text-foreground">
-                          Karaoke versions{" "}
-                          <span className="font-normal text-muted">— by confidence</span>
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => setShowKaraokePicker(false)}
-                          aria-label="Close karaoke options"
-                          className="flex size-7 shrink-0 items-center justify-center rounded-lg text-subtle transition-colors hover:bg-surface-2 hover:text-foreground"
-                        >
-                          <X className="size-4" />
-                        </button>
-                      </div>
-                      <div className="max-h-80 overflow-y-auto p-2">
-                        {karaokeGenerating || !karaokeCandidates ? (
-                          <p className="flex items-center gap-2 px-2 py-3 text-xs text-muted">
-                            <Loader2 className="size-3.5 animate-spin" />
-                            Searching karaoke…
-                          </p>
-                        ) : karaokeCandidates.length === 0 ? (
-                          <p className="px-2 py-3 text-xs text-muted">
-                            No backing track found for this song.
-                          </p>
-                        ) : (
-                          <ul className="flex flex-col gap-1">
-                            {karaokeCandidates.map((candidate) => {
-                              const confidence = karaokeConfidence(candidate.score);
-                              return (
-                                <li key={candidate.videoId}>
-                                  <button
-                                    type="button"
-                                    onClick={() => pickKaraoke(candidate)}
-                                    className="flex w-full items-center gap-2 rounded-lg border border-border px-2.5 py-2 text-left transition-colors hover:border-foreground/25"
-                                  >
-                                    <span className="shrink-0 rounded-md border border-border px-1.5 py-0.5 text-[10px] font-semibold text-muted">
-                                      {KARAOKE_KIND_LABEL[candidate.kind]}
-                                    </span>
-                                    {candidate.official ? (
-                                      <span className="shrink-0 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
-                                        公式
-                                      </span>
-                                    ) : null}
-                                    <span className="min-w-0 flex-1 truncate text-xs text-foreground">
-                                      {candidate.title}
-                                    </span>
-                                    {formatDuration(candidate.duration) ? (
-                                      <span className="shrink-0 text-[10px] tabular-nums text-subtle">
-                                        {formatDuration(candidate.duration)}
-                                      </span>
-                                    ) : null}
-                                    <span
-                                      className={cn(
-                                        "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                                        confidence === "High"
-                                          ? "bg-primary/15 text-primary"
-                                          : confidence === "Medium"
-                                            ? "bg-surface-2 text-foreground"
-                                            : "bg-border text-muted",
-                                      )}
-                                    >
-                                      {confidence}
-                                    </span>
-                                  </button>
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        )}
-                      </div>
-                    </div>
-                  </>
-                ) : null}
-              </div>
-
-              {karaoke && chosenKaraoke ? (
-                <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-                  <Music2 className="size-3.5 shrink-0 text-primary" />
-                  <span className="max-w-72 truncate">{chosenKaraoke.title}</span>
-                  <button
-                    type="button"
-                    onClick={() => setShowKaraokePicker(true)}
-                    className="inline-flex min-h-8 items-center gap-1 rounded-lg px-1.5 font-medium underline-offset-4 hover:text-foreground hover:underline"
-                  >
-                    Change version
-                  </button>
-                </div>
-              ) : null}
+              <SongPlayer
+                sourceUrl={result.sourceUrl}
+                title={result.title}
+                onTimeChange={handleTimeChange}
+                karaoke={karaoke}
+                onBackToVocals={backToVocals}
+                onBackToKaraoke={backToKaraoke}
+                onFindKaraoke={() => {
+                  setShowKaraokePicker(true);
+                  void generateKaraoke();
+                }}
+                karaokePickerOpen={showKaraokePicker}
+                onKaraokePickerClose={() => setShowKaraokePicker(false)}
+                karaokeCandidates={karaokeCandidates}
+                karaokeBusy={karaokeGenerating}
+                onPickKaraoke={pickKaraoke}
+                chosenKaraokeTitle={chosenKaraoke?.title}
+                stems={stems}
+                ref={songPlayerRef}
+              />
 
               {karaokeError && !karaoke && !showKaraokePicker ? (
                 <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-danger">

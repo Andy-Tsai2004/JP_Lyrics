@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vocal Off/On — Web Audio Karaoke Demo</title>
+<style>
+  :root {
+    --bg: #0c0d12;
+    --surface: #16171f;
+    --surface2: #1e1f28;
+    --fg: #ece8e1;
+    --muted: #9a958c;
+    --border: rgba(236,232,225,0.12);
+    --primary: #c5cdd6;
+    --danger: #d98980;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100dvh;
+    background: var(--bg); color: var(--fg);
+    font-family: "Noto Sans JP", "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  .wrap { width: min(34rem, 92vw); display: flex; flex-direction: column; gap: 14px; }
+  h1 { font-size: 1.15rem; font-weight: 600; letter-spacing: .01em; margin: 0; }
+  p { margin: 0; color: var(--muted); font-size: .875rem; line-height: 1.5; }
+  .sub { font-size: .8rem; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button {
+    font: inherit; cursor: pointer; color: var(--fg);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 9px 14px; font-size: .875rem; transition: .15s;
+  }
+  button:hover { border-color: rgba(236,232,225,0.28); }
+  button.primary { background: var(--primary); color: #0c0d12; font-weight: 600; }
+  label.file {
+    display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+    font-size: .84rem; color: var(--primary); text-decoration: underline; text-underline-offset: 3px;
+  }
+  label.file input { display: none; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 14px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .transport { display: flex; align-items: center; gap: 10px; }
+  input[type=range] { flex: 1; accent-color: var(--primary); height: 4px; }
+  .time { font-variant-numeric: tabular-nums; font-size: .8rem; color: var(--muted); min-width: 78px; text-align: right; }
+  .vocal-row { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+  .vocal-row .lbl { font-size: .9rem; font-weight: 600; }
+  .switch {
+    position: relative; display: inline-flex; align-items: center;
+    width: 58px; height: 30px; border-radius: 999px; padding: 3px;
+    background: var(--surface2); border: 1px solid var(--border); transition: .15s;
+  }
+  .switch .knob {
+    width: 24px; height: 24px; border-radius: 999px; background: var(--fg);
+    transition: transform .15s; box-shadow: 0 1px 3px rgba(0,0,0,.4);
+  }
+  .switch.vocal-off { background: transparent; }
+  .switch.vocal-off .knob { transform: translateX(28px); background: var(--danger); }
+  .switch .st { font-size: .62rem; font-weight: 700; letter-spacing: .04em; margin: 0 5px; color: var(--muted); }
+  .switch.vocal-off .st-on { display: none; }
+  .switch .st-off { display: none; }
+  .switch.vocal-off .st-off { display: inline; }
+  .note { font-size: .78rem; color: var(--muted); line-height: 1.5; }
+  .ok { color: var(--primary); }
+  .err { color: var(--danger); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Vocal Off / On — same timestamp</h1>
+    <p class="sub">
+      Load a <b>stereo</b> song (lead vocal <b>center-panned</b>) and flip the switch.
+      The vocals dip instantly at the exact same position — the song never restarts or jumps.
+      Implementation: Web Audio <b>center-channel cancellation (L − R)</b> applied live to the <em>same</em> audio stream.
+    </p>
+
+    <div class="card">
+      <div class="row">
+        <button id="playBtn" class="primary">▶ Play / Pause</button>
+        <button id="demoBtn">Load demo track</button>
+        <label class="file">Load your own song <input type="file" id="file" accept="audio/*" /></label>
+      </div>
+
+      <div class="transport">
+        <input type="range" id="seek" min="0" max="1000" value="0" />
+        <span class="time" id="time">0:00 / 0:00</span>
+      </div>
+
+      <div class="vocal-row">
+        <span class="lbl">Vocals</span>
+        <button id="vocals" class="switch" role="switch" aria-checked="true" aria-label="Toggle vocals">
+          <span class="st st-on">ON</span>
+          <span class="knob"></span>
+          <span class="st st-off">OFF</span>
+        </button>
+        <span class="time" id="vocalState">vocals on</span>
+      </div>
+    </div>
+
+    <p id="status" class="note"></p>
+    <p class="note">
+      <b>Note:</b> this removes what's identical in both channels (the mono/center
+      lead vocal), so it also dips center bass/snare. Doubled or stereo-spread
+      vocals may remain. It only works on stereo sources — a mono file has no
+      side info to cancel. No download, no server, no model: it's live DSP.
+    </p>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const audio = new Audio();
+  audio.preload = "auto";
+  document.body.appendChild(audio); // keep it in DOM (needed by some browsers)
+  audio.style.display = "none";
+
+  let ctx = null, src = null, gainFull = null, karaokeGain = null, graphReady = false;
+  let vocalOn = true;
+  let fileUrl = null;
+
+  function ensureGraph() {
+    if (graphReady) return;
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    src = ctx.createMediaElementSource(audio);
+
+    // Path A: full stereo (vocals on)
+    gainFull = ctx.createGain();
+    gainFull.gain.value = 1;
+    src.connect(gainFull);
+    gainFull.connect(ctx.destination);
+
+    // Path B: karaoke, L'=0.5L-0.5R, R'=0.5R-0.5L (removes the center)
+    const splitter = ctx.createChannelSplitter(2);
+    src.connect(splitter);
+    const merged = ctx.createChannelMerger(2);
+    // L' into merged ch0
+    const aL = ctx.createGain(); aL.gain.value = 0.5;
+    const aR = ctx.createGain(); aR.gain.value = -0.5;
+    splitter.connect(aL, 0, 0); splitter.connect(aR, 1, 0);
+    aL.connect(merged, 0, 0); aR.connect(merged, 0, 0);
+    // R' into merged ch1
+    const bR = ctx.createGain(); bR.gain.value = 0.5;
+    const bL = ctx.createGain(); bL.gain.value = -0.5;
+    splitter.connect(bR, 1, 0); splitter.connect(bL, 0, 0);
+    bR.connect(merged, 0, 1); bL.connect(merged, 0, 1);
+    karaokeGain = ctx.createGain();
+    karaokeGain.gain.value = 0;
+    merged.connect(karaokeGain);
+    karaokeGain.connect(ctx.destination);
+
+    graphReady = true;
+    setVocal(vocalOn, true);
+  }
+
+  function setVocal(on, immediate) {
+    vocalOn = on;
+    const btn = $("vocals");
+    btn.classList.toggle("vocal-off", !on);
+    btn.setAttribute("aria-checked", String(on));
+    $("vocalState").textContent = on ? "vocals on" : "vocals off";
+    if (!graphReady) return;
+    ctx.resume && ctx.resume();
+    const t = ctx.currentTime;
+    const dur = immediate ? 0 : 0.015;
+    gainFull.gain.cancelScheduledValues(t);
+    gainFull.gain.setValueAtTime(gainFull.gain.value, t);
+    gainFull.gain.linearRampToValueAtTime(on ? 1 : 0, t + dur);
+    karaokeGain.gain.cancelScheduledValues(t);
+    karaokeGain.gain.setValueAtTime(karaokeGain.gain.value, t);
+    karaokeGain.gain.linearRampToValueAtTime(on ? 0 : 1, t + dur);
+  }
+
+  // ---- transport ----
+  const seek = $("seek");
+  const timeEl = $("time");
+  function fmt(s) {
+    if (!Number.isFinite(s)) s = 0;
+    const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+    return m + ":" + String(sec).padStart(2, "0");
+  }
+  audio.addEventListener("loadedmetadata", () => {
+    audio.duration && (seek.max = 1000);
+    updateTime();
+  });
+  audio.addEventListener("timeupdate", updateTime);
+  audio.addEventListener("play", () => setPlayBtn(true));
+  audio.addEventListener("pause", () => setPlayBtn(false));
+  audio.addEventListener("ended", () => setPlayBtn(false));
+  function updateTime() {
+    timeEl.textContent = fmt(audio.currentTime || 0) + " / " + fmt(audio.duration || 0);
+    if (audio.duration) seek.value = String(Math.round((audio.currentTime / audio.duration) * 1000));
+  }
+  seek.addEventListener("input", () => {
+    if (audio.duration) audio.currentTime = (Number(seek.value) / 1000) * audio.duration;
+  });
+  function setPlayBtn(playing) {
+    $("playBtn").textContent = playing ? "⏸ Pause" : "▶ Play / Pause";
+  }
+  $("playBtn").addEventListener("click", () => {
+    ensureGraph();
+    ctx.resume && ctx.resume();
+    if (audio.paused) audio.play(); else audio.pause();
+  });
+
+  // ---- vocal toggle ----
+  $("vocals").addEventListener("click", () => {
+    ensureGraph();
+    ctx.resume && ctx.resume();
+    setVocal(!vocalOn, false);
+  });
+
+  // ---- file loading ----
+  $("file").addEventListener("change", (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    if (fileUrl) URL.revokeObjectURL(fileUrl);
+    fileUrl = URL.createObjectURL(f);
+    audio.src = fileUrl;
+    ensureGraph();
+    ctx.resume && ctx.resume();
+    audio.play();
+    setStatus("Loaded: " + f.name + " — flip the switch to drop the vocals.");
+  });
+
+  // ---- synthesized demo track: center "vocal-like" lead + panned arps ----
+  $("demoBtn").addEventListener("click", () => {
+    const wav = makeDemoWav();
+    if (fileUrl) URL.revokeObjectURL(fileUrl);
+    fileUrl = URL.createObjectURL(wav);
+    audio.src = fileUrl;
+    setStatus("Demo track loaded — flip the switch; the center 'vocal' melody disappears.");
+    ensureGraph();
+    ctx.resume && ctx.resume();
+    audio.play();
+  });
+
+  function makeDemoWav() {
+    const sr = 44100, dur = 6, n = Math.floor(sr * dur);
+    const ch = 2;
+    const data = new Float32Array(n * ch);
+    const lead = [262, 294, 330, 392, 330, 294, 262, 220];
+    const arp = [330, 415, 494, 415, 330, 262];
+    for (let i = 0; i < n; i++) {
+      const t = i / sr;
+      const beat = Math.floor(t * 2); // 2 notes/sec
+      // center lead (identical L & R) — this gets removed by L−R
+      const lf = lead[beat % lead.length];
+      const vibrato = 1 + 0.008 * Math.sin(2 * Math.PI * 6 * t);
+      const env = 0.5 * (1 - Math.exp(-t * 20)) * Math.exp(-((t % 0.5) - 0.25) * 4);
+      const leadS = Math.sin(2 * Math.PI * lf * vibrato * t) * env;
+      // stereo panned arps (left/right alternate) — these survive L−R
+      const an = Math.floor(t / 0.25);
+      const af = arp[an % arp.length];
+      const arpS = 0.22 * Math.sin(2 * Math.PI * af * t) * Math.exp(-((t % 0.25) - 0.1) * 8);
+      const panL = (an % 2 === 0) ? 1 : 0.25;
+      const panR = (an % 2 === 0) ? 0.25 : 1;
+      const L = leadS + arpS * panL;
+      const R = leadS + arpS * panR;
+      data[i * ch] = L;
+      data[i * ch + 1] = R;
+    }
+    return encodeWav(data, sr);
+  }
+
+  function encodeWav(samples, sr) {
+    const ch = 2, n = samples.length / ch;
+    const buf = new ArrayBuffer(44 + samples.length * 2);
+    const iv = new DataView(buf);
+    const wstr = (o, s) => { for (let i = 0; i < s.length; i++) iv.setUint8(o + i, s.charCodeAt(i)); };
+    wstr(0, "RIFF"); iv.setUint32(4, 36 + samples.length * 2, true); wstr(8, "WAVE");
+    wstr(12, "fmt "); iv.setUint32(16, 16, true); iv.setUint16(20, 1, true); iv.setUint16(22, ch, true);
+    iv.setUint32(24, sr, true); iv.setUint32(28, sr * ch * 2, true); iv.setUint16(32, ch * 2, true); iv.setUint16(34, 16, true);
+    wstr(36, "data"); iv.setUint32(40, samples.length * 2, true);
+    for (let i = 0; i < samples.length; i++) {
+      let v = Math.max(-1, Math.min(1, samples[i]));
+      v = v < 0 ? v * 0x8000 : v * 0x7fff;
+      iv.setInt16(44 + i * 2, v, true);
+    }
+    return new Blob([buf], { type: "audio/wav" });
+  }
+
+  function setStatus(msg) { $("status").textContent = msg; }
+})();
+</script>
+</body>
+</html>

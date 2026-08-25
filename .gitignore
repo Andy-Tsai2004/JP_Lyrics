@@ -11,5 +11,19 @@ public/kuromoji-dict/
 !.env.example
 *.log
 
+# Stem generator (on-demand off-vocal service)
+stems_cache/
+.venv-stems/
+.venv/
+
+# Cloudflare tunnel / service logs
+.stems-service.log
+.cloudflared.log
+.stems-service.err.log
+.cloudflared.err.log
+.cloudflared/
+.service.pid
+.tunnel.pid
+
 .DS_Store
 Thumbs.db
