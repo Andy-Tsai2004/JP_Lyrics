@@ -269,6 +269,21 @@ export function SongPlayer({
     setCurrent(0);
     setDuration(0);
     setError(null);
+    // Stop any page-owned <audio> (auto stem or manual upload) too — the
+    // previous song must not keep playing while the next one loads/generates.
+    const a = audioElRef.current;
+    if (a) {
+      a.pause();
+      a.removeAttribute("src");
+      a.load();
+    }
+    audioCtxRef.current?.close().catch(() => {});
+    audioCtxRef.current = null;
+    audioGraphReadyRef.current = false;
+    setAudioSrc(null);
+    setStemFiles(null);
+    setStemActive(false);
+    setVocal(true);
   }, [stopTick]);
 
   useEffect(() => {
