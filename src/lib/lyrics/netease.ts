@@ -11,7 +11,8 @@ import { fetchWithTimeout } from "./proxy.ts";
 export type { NeteaseSong, TimedLyricLine } from "./lrc.ts";
 
 const NETEASE_TIMEOUT_MS = 15_000;
-const CACHE_PREFIX = "jplyrics:netease:v2:";
+// v3: word-level timestamps were added; bump so stale v2 caches re-fetch.
+const CACHE_PREFIX = "jplyrics:netease:v3:";
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // keep synced lyrics for a week
 
 type CacheEntry = {
