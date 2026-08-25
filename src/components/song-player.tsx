@@ -384,7 +384,9 @@ export function SongPlayer({
               playerRef.current = event.target;
               event.target.setVolume(volumeRef.current);
               if (mutedRef.current) event.target.mute();
-              event.target.playVideo();
+              // If the stem audio already took over while the player was
+              // loading, don't start the video over it (double playback).
+              if (!audioModeRef.current) event.target.playVideo();
               if (pendingSeekRef.current != null) {
                 event.target.seekTo(pendingSeekRef.current, true);
                 pendingSeekRef.current = null;
@@ -397,8 +399,11 @@ export function SongPlayer({
                   startTick();
                   break;
                 case 2: // paused
-                  setStatus("paused");
+                  // Stop polling the (now paused) video for time — the audio
+                  // element drives the transport once the stem takes over.
                   stopTick();
+                  if (audioModeRef.current) break;
+                  setStatus("paused");
                   break;
                 case 0: // ended
                   setStatus("ended");
@@ -513,9 +518,15 @@ export function SongPlayer({
     if (!stemFiles || stemActive) return;
     const a = audioElRef.current;
     if (a) {
+      // Never overlap the YouTube player: pause it, and if it was playing,
+      // resume the stem at the same position (both are the same recording).
+      const videoTime = playerRef.current?.getCurrentTime?.() ?? 0;
+      const resumeAt = Number.isFinite(videoTime) && videoTime > 0 ? videoTime : 0;
+      playerRef.current?.pauseVideo();
       a.src = vocalOn ? stemFiles.full : stemFiles.vocals;
       a.load();
       a.play().catch(() => {});
+      a.currentTime = resumeAt;
     }
     setStemActive(true);
   }, [stemFiles, stemActive, vocalOn]);
@@ -525,6 +536,7 @@ export function SongPlayer({
     if (!stemFiles || !a) return;
     // Swap between the full mix (vocals on) and the off-vocal stem at the
     // same timestamp — both are the same recording, so alignment holds.
+    playerRef.current?.pauseVideo();
     const t = a.currentTime;
     a.src = vocalOn ? stemFiles.vocals : stemFiles.full;
     a.load();
