@@ -1,6 +1,7 @@
 import { Heart, History, X } from "lucide-react";
 import type { SongFavorite } from "@/lib/lyrics/favorites";
 import type { SongRecord } from "@/lib/lyrics/history";
+import { useI18n, type Locale, type Translate } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 export type LibraryView = "favorites" | "history";
@@ -13,15 +14,15 @@ function hostOf(url: string): string {
   }
 }
 
-function relativeTime(timestamp: number): string {
+function relativeTime(timestamp: number, t: Translate, locale: Locale): string {
   const minutes = Math.floor((Date.now() - timestamp) / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 1) return t("time.justNow");
+  if (minutes < 60) return t("time.minutesAgo", { n: minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return t("time.hoursAgo", { n: hours });
   const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(timestamp).toLocaleDateString();
+  if (days < 7) return t("time.daysAgo", { n: days });
+  return new Date(timestamp).toLocaleDateString(locale === "zh-Hant" ? "zh-Hant" : "en");
 }
 
 function FavoriteItem({
@@ -35,6 +36,7 @@ function FavoriteItem({
   onOpen: () => void;
   onRemove: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <li className="flex items-stretch rounded-xl border border-border bg-surface transition-colors hover:border-foreground/20">
       <button
@@ -50,7 +52,7 @@ function FavoriteItem({
       </button>
       <button
         type="button"
-        aria-label={`Remove ${favorite.title} from favorites`}
+        aria-label={t("library.removeFavAria", { title: favorite.title })}
         onClick={onRemove}
         className="shrink-0 self-center px-2.5 py-2 text-danger transition-colors hover:text-foreground"
       >
@@ -71,6 +73,7 @@ function HistoryItem({
   onOpen: () => void;
   onRemove: () => void;
 }) {
+  const { t, locale } = useI18n();
   return (
     <li className="flex items-stretch rounded-xl border border-border bg-surface transition-colors hover:border-foreground/20">
       <button
@@ -83,12 +86,12 @@ function HistoryItem({
       >
         <span className="truncate text-sm font-medium text-foreground">{record.title}</span>
         <span className="truncate text-xs text-muted">
-          {hostOf(record.sourceUrl)} · {relativeTime(record.fetchedAt)}
+          {hostOf(record.sourceUrl)} · {relativeTime(record.fetchedAt, t, locale)}
         </span>
       </button>
       <button
         type="button"
-        aria-label={`Remove ${record.title} from history`}
+        aria-label={t("library.removeHistoryAria", { title: record.title })}
         onClick={onRemove}
         className="shrink-0 self-center px-2.5 py-2 text-subtle transition-colors hover:text-danger"
       >
@@ -124,8 +127,9 @@ export function LibraryDrawer({
   onClear: () => void;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const isFavorites = view === "favorites";
-  const heading = isFavorites ? "Favorites" : "History";
+  const heading = isFavorites ? t("toolbar.favorites") : t("toolbar.history");
 
   return (
     <div className="fixed inset-0 z-50">
@@ -159,13 +163,13 @@ export function LibraryDrawer({
                 onClick={onClear}
                 className="min-h-8 px-1.5 text-xs text-muted underline-offset-4 transition-colors hover:text-danger hover:underline"
               >
-                Clear all
+                {t("library.clearAll")}
               </button>
             ) : null}
             <button
               type="button"
               onClick={onClose}
-              aria-label={`Close ${heading}`}
+              aria-label={t("library.close", { heading })}
               className="flex size-9 items-center justify-center rounded-lg text-subtle transition-colors hover:bg-surface-2 hover:text-foreground"
             >
               <X className="size-5" />
@@ -176,7 +180,7 @@ export function LibraryDrawer({
         {isFavorites ? (
           favorites.length === 0 ? (
             <p className="rounded-2xl border border-dashed border-border bg-surface px-4 py-3 text-sm leading-relaxed text-muted">
-              No favorites yet — tap the heart on a song to save it here.
+              {t("library.emptyFavorites")}
             </p>
           ) : (
             <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
@@ -192,10 +196,8 @@ export function LibraryDrawer({
             </ul>
           )
         ) : records.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border bg-surface px-4 py-6 text-center text-sm leading-relaxed text-muted">
-            No songs fetched yet.
-            <br />
-            Songs you open will appear here.
+          <div className="whitespace-pre-line rounded-2xl border border-dashed border-border bg-surface px-4 py-6 text-center text-sm leading-relaxed text-muted">
+            {t("library.emptyHistory")}
           </div>
         ) : (
           <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">

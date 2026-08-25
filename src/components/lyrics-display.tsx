@@ -1,10 +1,15 @@
 import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
-import { containsKatakana, katakanaToHiragana, katakanaToRomaji } from "@/lib/lyrics/kana";
+import {
+  containsKatakana,
+  katakanaToHiragana,
+  katakanaToRomaji,
+  kanaToRomaji,
+} from "@/lib/lyrics/kana";
 import type { LyricLine } from "@/lib/lyrics/types";
 import { cn } from "@/lib/utils";
 
-export type RubyAssistMode = "furigana" | "hiragana" | "romaji";
+export type KatakanaAidMode = "off" | "hiragana" | "romaji";
 
 function splitKatakanaRuns(text: string): Array<{ text: string; isKatakana: boolean }> {
   const chunks: Array<{ text: string; isKatakana: boolean }> = [];
@@ -29,14 +34,14 @@ function splitKatakanaRuns(text: string): Array<{ text: string; isKatakana: bool
   return chunks;
 }
 
-function katakanaReading(text: string, mode: Exclude<RubyAssistMode, "furigana">): string {
+function katakanaReading(text: string, mode: Exclude<KatakanaAidMode, "off">): string {
   if (mode === "hiragana") return katakanaToHiragana(text);
   return katakanaToRomaji(text);
 }
 
 function renderTokenWithAssist(
   tokenText: string,
-  mode: Exclude<RubyAssistMode, "furigana">,
+  mode: Exclude<KatakanaAidMode, "off">,
 ): ReactNode[] {
   return splitKatakanaRuns(tokenText).map((chunk, idx) => {
     if (!chunk.isKatakana) return <span key={idx}>{chunk.text}</span>;
@@ -50,12 +55,27 @@ function renderTokenWithAssist(
   });
 }
 
+/**
+ * Full-line romaji for the transliteration view. Kanji tokens use their
+ * (authoritative) furigana reading, kana tokens are converted directly, and
+ * Latin / digits / punctuation pass through; tokens are joined with a single
+ * space for a readable, left-aligned line.
+ */
+function romajiOfLine(line: LyricLine): string {
+  return line.tokens
+    .map((token) => (token.furigana ? kanaToRomaji(token.furigana) : kanaToRomaji(token.text)))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function LyricsDisplay({
   lines,
   activeIndex,
   onLineClick,
   showFurigana,
-  rubyAssistMode,
+  katakanaAid,
+  romaji,
   fontSizeRem,
 }: {
   lines: LyricLine[];
@@ -64,7 +84,9 @@ export function LyricsDisplay({
   /** When provided, clicking a line calls back with its index (seek target). */
   onLineClick?: (index: number) => void;
   showFurigana: boolean;
-  rubyAssistMode: RubyAssistMode;
+  katakanaAid: KatakanaAidMode;
+  /** When true, render a romanized reading above each line (left-aligned). */
+  romaji: boolean;
   fontSizeRem: number;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -88,50 +110,59 @@ export function LyricsDisplay({
       )}
     >
       {lines.map((line, i) => (
-        <p
-          key={`${i}-${line.text}`}
-          aria-current={syncing && i === activeIndex ? "true" : undefined}
-          role={onLineClick ? "button" : undefined}
-          tabIndex={onLineClick ? 0 : undefined}
-          onClick={onLineClick ? () => onLineClick(i) : undefined}
-          onKeyDown={
-            onLineClick
-              ? (event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    onLineClick(i);
+        <div key={`${i}-${line.text}`}>
+          {romaji ? (
+            <div className="text-left text-[0.72em] leading-tight tracking-wide text-muted">
+              {romajiOfLine(line)}
+            </div>
+          ) : null}
+          <p
+            aria-current={syncing && i === activeIndex ? "true" : undefined}
+            role={onLineClick ? "button" : undefined}
+            tabIndex={onLineClick ? 0 : undefined}
+            onClick={onLineClick ? () => onLineClick(i) : undefined}
+            onKeyDown={
+              onLineClick
+                ? (event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onLineClick(i);
+                    }
                   }
-                }
-              : undefined
-          }
-          className={cn(
-            "font-serif text-foreground transition-colors duration-300",
-            showFurigana && "pt-1",
-            syncing &&
-              (i === activeIndex ? "font-medium text-foreground" : "text-subtle"),
-            onLineClick &&
-              "cursor-pointer outline-none hover:text-foreground focus-visible:text-foreground",
-          )}
-          style={{
-            fontSize: `${fontSizeRem}rem`,
-            lineHeight: showFurigana ? 1.74 : 1.62,
-          }}
-        >
-          {showFurigana
-            ? line.tokens.map((token, j) =>
-                token.furigana ? (
-                  <ruby key={j} className="ruby-token">
-                    {token.text}
-                    <rt>{token.furigana}</rt>
-                  </ruby>
-                ) : rubyAssistMode !== "furigana" && containsKatakana(token.text) ? (
-                  <span key={j}>{renderTokenWithAssist(token.text, rubyAssistMode)}</span>
-                ) : (
-                  <span key={j}>{token.text}</span>
-                ),
-              )
-            : line.text}
-        </p>
+                : undefined
+            }
+            className={cn(
+              "font-serif text-foreground transition-colors duration-300",
+              (showFurigana || katakanaAid !== "off") && "pt-1",
+              syncing && (i === activeIndex ? "font-medium text-foreground" : "text-subtle"),
+              onLineClick &&
+                "cursor-pointer outline-none hover:text-foreground focus-visible:text-foreground",
+            )}
+            style={{
+              fontSize: `${fontSizeRem}rem`,
+              lineHeight: showFurigana || katakanaAid !== "off" ? 1.74 : 1.62,
+            }}
+          >
+            {romaji
+              ? line.text
+              : !showFurigana && katakanaAid === "off"
+                ? line.text
+                : line.tokens.map((token, j) => {
+                    if (token.furigana && showFurigana) {
+                      return (
+                        <ruby key={j} className="ruby-token">
+                          {token.text}
+                          <rt>{token.furigana}</rt>
+                        </ruby>
+                      );
+                    }
+                    if (katakanaAid !== "off" && containsKatakana(token.text)) {
+                      return <span key={j}>{renderTokenWithAssist(token.text, katakanaAid)}</span>;
+                    }
+                    return <span key={j}>{token.text}</span>;
+                  })}
+          </p>
+        </div>
       ))}
     </div>
   );

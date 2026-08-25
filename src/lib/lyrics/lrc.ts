@@ -22,7 +22,7 @@ export function normalizeForMatch(text: string): string {
     .normalize("NFKC")
     .toLowerCase()
     .replace(/\s+/g, "")
-    .replace(/[「」『』（）()【】\[\]・.。,，、\-–—:：'"“”!！?？]/g, "");
+    .replace(/[「」『』（）()【】[\]・.。,，、\-–—:：'"“”!！?？]/g, "");
 }
 
 /**

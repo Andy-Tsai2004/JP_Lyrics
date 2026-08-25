@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { splitTitle } from "@/lib/lyrics/lrc";
 import { resolveKaraokeVideoId, resolveVideoId, youtubeSearchUrl } from "@/lib/lyrics/video";
+import { useI18n } from "@/lib/i18n";
 
 const PLAYER_ELEMENT_ID = "jplyrics-youtube-player";
 
@@ -110,6 +111,7 @@ export function SongPlayer({
   onKaraokeAction?: () => void;
   ref?: Ref<SongPlayerHandle>;
 }) {
+  const { t } = useI18n();
   const playerRef = useRef<YTPlayer | null>(null);
   const sourceRef = useRef(sourceUrl);
   const karaokeRef = useRef(karaoke);
@@ -206,9 +208,7 @@ export function SongPlayer({
     if (target !== sourceRef.current || mode !== karaokeRef.current) return; // song/variant changed while resolving
     if (!videoId) {
       setStatus("error");
-      setError(
-        mode ? "找不到可直接嵌入的卡拉OK／伴奏影片。" : "這個來源沒有可直接嵌入的官方影片。",
-      );
+      setError(mode ? t("player.error.noKaraoke") : t("player.error.noEmbed"));
       return;
     }
 
@@ -266,14 +266,14 @@ export function SongPlayer({
             onError: () => {
               stopTick();
               setStatus("error");
-              setError("YouTube 無法播放這個影片（可能受地區或版權限制）。");
+              setError(t("player.error.playback"));
             },
           },
         });
         playerRef.current = player;
       } catch {
         setStatus("error");
-        setError("無法載入 YouTube 播放器，請稍後再試。");
+        setError(t("player.error.load"));
       }
     })();
   }
@@ -364,7 +364,7 @@ export function SongPlayer({
           className="shrink-0 rounded-full"
           onClick={isPlaying ? handlePause : handlePlay}
           disabled={isBusy}
-          aria-label={isPlaying ? "Pause" : "Play"}
+          aria-label={isPlaying ? t("player.pause") : t("player.play")}
         >
           {isBusy ? (
             <Loader2 className="size-5 animate-spin" />
@@ -384,7 +384,7 @@ export function SongPlayer({
           onChange={(e) => handleSeek(Number(e.target.value))}
           disabled={!playerRef.current || max === 0}
           className="h-1.5 w-full min-w-0 accent-primary disabled:cursor-default disabled:opacity-40"
-          aria-label="Playback position"
+          aria-label={t("player.position")}
         />
 
         <span className="shrink-0 text-xs tabular-nums text-muted">
@@ -395,7 +395,7 @@ export function SongPlayer({
           <button
             type="button"
             onClick={handleMuteToggle}
-            aria-label={muted ? "Unmute" : "Mute"}
+            aria-label={muted ? t("player.unmute") : t("player.mute")}
             aria-pressed={muted}
             className="flex size-8 items-center justify-center rounded-full text-muted transition-colors hover:text-foreground"
           >
@@ -416,7 +416,7 @@ export function SongPlayer({
             onChange={(e) => handleVolumeChange(Number(e.target.value))}
             disabled={!playerRef.current}
             className="h-1.5 w-16 accent-primary sm:w-20 disabled:cursor-default disabled:opacity-40"
-            aria-label="Volume"
+            aria-label={t("player.volume")}
           />
         </div>
 
@@ -429,14 +429,10 @@ export function SongPlayer({
               ? "border-primary/40 bg-primary/10 text-foreground hover:bg-primary/20"
               : "border-border text-muted hover:text-foreground",
           )}
-          title={
-            karaoke
-              ? "Switch back to the original vocal video"
-              : "Find backing-track (karaoke / off-vocal / piano) versions of this song"
-          }
+          title={karaoke ? t("player.backToVocalsTitle") : t("player.findKaraokeTitle")}
         >
           {karaoke ? <Music2 className="size-3.5" /> : <Sparkles className="size-3.5" />}
-          {karaoke ? "Back to vocals" : "Find karaoke"}
+          {karaoke ? t("player.backToVocals") : t("player.findKaraoke")}
         </button>
       </div>
 
@@ -449,7 +445,7 @@ export function SongPlayer({
             rel="noreferrer"
             className="underline underline-offset-2 hover:text-foreground"
           >
-            在 YouTube 搜尋「{karaoke ? karaokeQuery : title}」
+            {t("player.searchYoutube", { query: karaoke ? karaokeQuery : title })}
           </a>
         </p>
       ) : null}

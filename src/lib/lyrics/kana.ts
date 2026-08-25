@@ -16,3 +16,12 @@ export function katakanaToRomaji(text: string): string {
     upcaseKatakana: false,
   });
 }
+
+/**
+ * Convert hiragana + katakana to romaji for the full-line romaji view. Latin
+ * text, digits, punctuation and whitespace pass through unchanged (so a line
+ * like "春の 桜 2024" becomes "haru no sakura 2024").
+ */
+export function kanaToRomaji(text: string): string {
+  return toRomaji(text, { passRomaji: true, upcaseKatakana: false });
+}
