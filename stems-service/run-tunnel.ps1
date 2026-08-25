@@ -6,6 +6,7 @@
 #   .\run-tunnel.ps1               # start service + tunnel, then ask to update the site
 #   .\run-tunnel.ps1 -AutoUpdate   # same, but push the new URL to github.io without asking
 #   .\run-tunnel.ps1 -SkipSiteUpdate
+#   .\run-tunnel.ps1 -LocalOnly    # start ONLY the local service (no public tunnel)
 #   .\run-tunnel.ps1 -StopOnly     # stop a previously started service + tunnel
 #
 # It prints the public https://<random>.trycloudflare.com URL. Visitors of
@@ -18,6 +19,7 @@
 # ============================================================================
 param(
   [switch]$StopOnly,
+  [switch]$LocalOnly,
   [switch]$SkipSiteUpdate,
   [switch]$AutoUpdate
 )
@@ -122,26 +124,28 @@ if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
   exit 1
 }
 
-# --- 3. cloudflared ----------------------------------------------------------
+# --- 3. cloudflared (skipped with -LocalOnly) --------------------------------
 $cloudflared = $null
-$clfCmd = Get-Command cloudflared -ErrorAction SilentlyContinue
-if ($clfCmd) {
-  $cloudflared = $clfCmd.Source
-} else {
-  $localClf = Join-Path $ServiceDir '.cloudflared\cloudflared.exe'
-  if (-not (Test-Path $localClf)) {
-    Write-Step 'Downloading cloudflared (Windows)...'
-    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $localClf) | Out-Null
-    $url = 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe'
-    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
-    if ($curl) {
-      & $curl.Source -fsSL $url -o $localClf
-    } else {
-      Invoke-WebRequest -Uri $url -OutFile $localClf
+if (-not $LocalOnly) {
+  $clfCmd = Get-Command cloudflared -ErrorAction SilentlyContinue
+  if ($clfCmd) {
+    $cloudflared = $clfCmd.Source
+  } else {
+    $localClf = Join-Path $ServiceDir '.cloudflared\cloudflared.exe'
+    if (-not (Test-Path $localClf)) {
+      Write-Step 'Downloading cloudflared (Windows)...'
+      New-Item -ItemType Directory -Force -Path (Split-Path -Parent $localClf) | Out-Null
+      $url = 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe'
+      $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+      if ($curl) {
+        & $curl.Source -fsSL $url -o $localClf
+      } else {
+        Invoke-WebRequest -Uri $url -OutFile $localClf
+      }
+      if (-not (Test-Path $localClf)) { Write-Fail 'cloudflared download failed.'; exit 1 }
     }
-    if (-not (Test-Path $localClf)) { Write-Fail 'cloudflared download failed.'; exit 1 }
+    $cloudflared = $localClf
   }
-  $cloudflared = $localClf
 }
 
 # --- 4. Start the stem service ------------------------------------------------
@@ -178,93 +182,104 @@ if (-not $healthy) {
 }
 Write-Ok "Stem service healthy on http://localhost:$Port"
 
-# --- 5. Start the Cloudflare quick tunnel --------------------------------------
-$tunnelLog = Join-Path $ServiceDir '.cloudflared.log'
-$tunnelErr = Join-Path $ServiceDir '.cloudflared.err.log'
-Write-Step "Opening Cloudflare quick tunnel to http://localhost:$Port..."
-$tun = Start-Process -FilePath $cloudflared `
-  -ArgumentList @('tunnel', '--no-autoupdate', '--url', "http://localhost:$Port") `
-  -WorkingDirectory $ServiceDir `
-  -RedirectStandardOutput $tunnelLog `
-  -RedirectStandardError $tunnelErr `
-  -WindowStyle Hidden -PassThru
-Set-Content -Path (Join-Path $ServiceDir '.tunnel.pid') -Value $tun.Id
+if (-not $LocalOnly) {
+  # --- 5. Start the Cloudflare quick tunnel --------------------------------------
+  $tunnelLog = Join-Path $ServiceDir '.cloudflared.log'
+  $tunnelErr = Join-Path $ServiceDir '.cloudflared.err.log'
+  Write-Step "Opening Cloudflare quick tunnel to http://localhost:$Port..."
+  $tun = Start-Process -FilePath $cloudflared `
+    -ArgumentList @('tunnel', '--no-autoupdate', '--url', "http://localhost:$Port") `
+    -WorkingDirectory $ServiceDir `
+    -RedirectStandardOutput $tunnelLog `
+    -RedirectStandardError $tunnelErr `
+    -WindowStyle Hidden -PassThru
+  Set-Content -Path (Join-Path $ServiceDir '.tunnel.pid') -Value $tun.Id
 
-$url = $null
-$urlRe = 'https://[a-z0-9-]+\.trycloudflare\.com'
-for ($i = 0; $i -lt 90; $i++) {
-  if ($tun.HasExited) { break }
-  $content = ''
-  try {
-    if (Test-Path $tunnelLog) { $content = Get-Content $tunnelLog -Raw -ErrorAction Stop }
-    if (-not $content -and (Test-Path $tunnelErr)) { $content = Get-Content $tunnelErr -Raw -ErrorAction Stop }
-  } catch { }
-  $m = [regex]::Match($content, $urlRe)
-  if ($m.Success) { $url = $m.Value; break }
-  Start-Sleep -Seconds 1
-}
-if (-not $url) {
-  Write-Fail 'No tunnel URL appeared. Last tunnel log lines:'
-  Get-Content $tunnelLog -Tail 15 -ErrorAction SilentlyContinue
-  Get-Content $tunnelErr -Tail 15 -ErrorAction SilentlyContinue
-  Stop-Process -Id $tun.Id -Force -ErrorAction SilentlyContinue
-  exit 1
-}
-
-Write-Host ''
-Write-Host '==============================================================' -ForegroundColor Green
-Write-Host "  PUBLIC URL:  $url" -ForegroundColor Green
-Write-Host '  Anyone on https://luszechai.github.io/JP_Lyrics/ can now use' -ForegroundColor Green
-Write-Host '  the automated off-vocal karaoke while this PC stays on.' -ForegroundColor Green
-Write-Host '  (First request per song takes ~1-2 min to generate, then cached.)' -ForegroundColor Green
-Write-Host '==============================================================' -ForegroundColor Green
-Write-Host ''
-
-# --- 6. Point the deployed site at this URL (runtime config, no rebuild) ------
-$configPath = Join-Path $RepoRoot 'public\stems-config.json'
-$doUpdate = $false
-if ($SkipSiteUpdate) {
-  Write-WarnMsg 'Skipping github.io config update (-SkipSiteUpdate).'
-} elseif ($AutoUpdate) {
-  $doUpdate = $true
-} elseif ([Environment]::UserInteractive) {
-  $answer = Read-Host 'Update github.io now so the site points at this URL? [Y/n]'
-  $doUpdate = ($answer -eq '' -or $answer -match '^(y|yes)$')
-}
-
-if ($doUpdate) {
-  try {
-    $json = Get-Content $configPath -Raw | ConvertFrom-Json
-    if ($json.apiUrl -eq $url) {
-      Write-Ok 'stems-config.json already points at this URL - nothing to push.'
-    } else {
-      $json.apiUrl = $url
-      $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-      [System.IO.File]::WriteAllText($configPath, ($json | ConvertTo-Json), $utf8NoBom)
-      git -C $RepoRoot add public/stems-config.json
-      git -C $RepoRoot commit -m 'stems: point site at live tunnel URL'
-      git -C $RepoRoot push origin main
-      if ($LASTEXITCODE -eq 0) {
-        Write-Ok 'Pushed. GitHub Pages will pick up the new URL in ~1-2 min.'
-      } else {
-        Write-Fail 'git push failed - the commit is ready locally. Push it yourself:'
-        Write-Fail "  git -C `"$RepoRoot`" push origin main"
-      }
-    }
-  } catch {
-    Write-Fail "Could not auto-update the config: $($_.Exception.Message)"
-    Write-Fail "Edit $configPath and set `"apiUrl`": `"$url`" manually, commit, and push."
+  $url = $null
+  $urlRe = 'https://[a-z0-9-]+\.trycloudflare\.com'
+  for ($i = 0; $i -lt 90; $i++) {
+    if ($tun.HasExited) { break }
+    $content = ''
+    try {
+      if (Test-Path $tunnelLog) { $content = Get-Content $tunnelLog -Raw -ErrorAction Stop }
+      if (-not $content -and (Test-Path $tunnelErr)) { $content = Get-Content $tunnelErr -Raw -ErrorAction Stop }
+    } catch { }
+    $m = [regex]::Match($content, $urlRe)
+    if ($m.Success) { $url = $m.Value; break }
+    Start-Sleep -Seconds 1
   }
-} else {
-  Write-WarnMsg 'Site not updated. To enable it, set apiUrl in the file below to:'
-  Write-WarnMsg "  $configPath"
-  Write-WarnMsg "  $url"
-}
+  if (-not $url) {
+    Write-Fail 'No tunnel URL appeared. Last tunnel log lines:'
+    Get-Content $tunnelLog -Tail 15 -ErrorAction SilentlyContinue
+    Get-Content $tunnelErr -Tail 15 -ErrorAction SilentlyContinue
+    Stop-Process -Id $tun.Id -Force -ErrorAction SilentlyContinue
+    exit 1
+  }
 
-Write-Host ''
-Write-Step 'Everything is running in the background.'
-Write-Step "  stem service log : $serviceLog"
-Write-Step "  tunnel log       : $tunnelLog"
-Write-Host ''
-Write-Ok 'Stop any time with:  .\stop-tunnel.ps1  (in this folder)'
-Write-Host ''
+  Write-Host ''
+  Write-Host '==============================================================' -ForegroundColor Green
+  Write-Host "  PUBLIC URL:  $url" -ForegroundColor Green
+  Write-Host '  Anyone on https://luszechai.github.io/JP_Lyrics/ can now use' -ForegroundColor Green
+  Write-Host '  the automated off-vocal karaoke while this PC stays on.' -ForegroundColor Green
+  Write-Host '  (First request per song takes ~1-2 min to generate, then cached.)' -ForegroundColor Green
+  Write-Host '==============================================================' -ForegroundColor Green
+  Write-Host ''
+
+  # --- 6. Point the deployed site at this URL (runtime config, no rebuild) ------
+  $configPath = Join-Path $RepoRoot 'public\stems-config.json'
+  $doUpdate = $false
+  if ($SkipSiteUpdate) {
+    Write-WarnMsg 'Skipping github.io config update (-SkipSiteUpdate).'
+  } elseif ($AutoUpdate) {
+    $doUpdate = $true
+  } elseif ([Environment]::UserInteractive) {
+    $answer = Read-Host 'Update github.io now so the site points at this URL? [Y/n]'
+    $doUpdate = ($answer -eq '' -or $answer -match '^(y|yes)$')
+  }
+
+  if ($doUpdate) {
+    try {
+      $json = Get-Content $configPath -Raw | ConvertFrom-Json
+      if ($json.apiUrl -eq $url) {
+        Write-Ok 'stems-config.json already points at this URL - nothing to push.'
+      } else {
+        $json.apiUrl = $url
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($configPath, ($json | ConvertTo-Json), $utf8NoBom)
+        git -C $RepoRoot add public/stems-config.json
+        git -C $RepoRoot commit -m 'stems: point site at live tunnel URL'
+        git -C $RepoRoot push origin main
+        if ($LASTEXITCODE -eq 0) {
+          Write-Ok 'Pushed. GitHub Pages will pick up the new URL in ~1-2 min.'
+        } else {
+          Write-Fail 'git push failed - the commit is ready locally. Push it yourself:'
+          Write-Fail "  git -C `"$RepoRoot`" push origin main"
+        }
+      }
+    } catch {
+      Write-Fail "Could not auto-update the config: $($_.Exception.Message)"
+      Write-Fail "Edit $configPath and set `"apiUrl`": `"$url`" manually, commit, and push."
+    }
+  } else {
+    Write-WarnMsg 'Site not updated. To enable it, set apiUrl in the file below to:'
+    Write-WarnMsg "  $configPath"
+    Write-WarnMsg "  $url"
+  }
+
+  Write-Host ''
+  Write-Step 'Everything is running in the background.'
+  Write-Step "  stem service log : $serviceLog"
+  Write-Step "  tunnel log       : $tunnelLog"
+  Write-Host ''
+  Write-Ok 'Stop any time with:  .\stop-tunnel.ps1  (in this folder)'
+  Write-Host ''
+} else {
+  Write-Host ''
+  Write-Ok "Stem service is running locally at http://localhost:$Port (API only - no page at /)."
+  Write-Ok "Health check:  http://localhost:$Port/api/health"
+  Write-Step "  stem service log : $serviceLog"
+  Write-Host ''
+  Write-Ok 'To also open the public tunnel for github.io, run:  .\run-tunnel.ps1'
+  Write-Ok 'Stop any time with:  .\stop-tunnel.ps1  (in this folder)'
+  Write-Host ''
+}
