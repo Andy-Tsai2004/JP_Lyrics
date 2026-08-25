@@ -661,40 +661,12 @@ export function LyricsApp() {
     songPlayerRef.current?.playKaraokeVideo(chosenKaraoke.videoId);
   }
 
-  // With synced lyrics, clicking a line jumps the song back to that line.
-  const handleLyricLineClick = useCallback(
-    (index: number) => {
-      if (!timedLines || index < 0 || index >= timedLines.length) return;
-      songPlayerRef.current?.seekTo(timedLines[index].start);
-    },
-    [timedLines],
-  );
-
-  // Binary-search the timed line that contains the current playback position
-  // (with the user-adjustable offset applied).
-  const activeIndex = useMemo(() => {
-    if (syncStatus !== "ok" || !timedLines || timedLines.length === 0) return null;
-    const t = currentTime + lyricOffset;
-    if (t < timedLines[0].start) return -1;
-    if (t >= timedLines[timedLines.length - 1].start) {
-      return timedLines.length - 1;
-    }
-    let lo = 0;
-    let hi = timedLines.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (timedLines[mid].start <= t) lo = mid;
-      else hi = mid - 1;
-    }
-    return lo;
-  }, [syncStatus, timedLines, currentTime, lyricOffset]);
-
-  // Merge the host-computed word timings into the synced lyric tokens so the
-  // UI can highlight each word as it is sung.
-  const displayLines = useMemo(() => {
-    if (!timedLines || timedLines.length === 0 || !stemTimings) {
-      return timedLines && timedLines.length > 0 ? timedLines : (result?.lines ?? []);
-    }
+  // Merge the host-computed word timings into the synced lyric lines: token
+  // times drive word-by-word highlighting, and the line start/end become the
+  // Whisper-aligned ones — so line sync follows the actual audio (the manual
+  // NetEase offset is no longer needed for aligned songs).
+  const syncLines = useMemo(() => {
+    if (!timedLines || timedLines.length === 0 || !stemTimings) return timedLines;
     const byIndex = new Map(stemTimings.lines.map((line) => [line.index, line]));
     let changed = false;
     const merged = timedLines.map((line, i) => {
@@ -706,15 +678,45 @@ export function LyricsApp() {
       let offset = 0;
       const tokens = line.tokens.map((token) => {
         const len = token.text.length;
-        const start = t.char_times[offset] ?? line.start;
-        const end = t.char_times[offset + Math.max(len - 1, 0)] ?? line.end;
+        const start = t.char_times[offset] ?? t.start;
+        const end = t.char_times[offset + Math.max(len - 1, 0)] ?? t.end;
         offset += len;
         return { ...token, start, end };
       });
-      return { ...line, tokens };
+      return { ...line, tokens, start: t.start, end: t.end };
     });
     return changed ? merged : timedLines;
-  }, [timedLines, stemTimings, result?.lines]);
+  }, [timedLines, stemTimings]);
+
+  // With synced lyrics, clicking a line jumps the song back to that line.
+  const handleLyricLineClick = useCallback(
+    (index: number) => {
+      if (!syncLines || index < 0 || index >= syncLines.length) return;
+      songPlayerRef.current?.seekTo(syncLines[index].start);
+    },
+    [syncLines],
+  );
+
+  // Binary-search the timed line that contains the current playback position
+  // (with the user-adjustable offset applied).
+  const activeIndex = useMemo(() => {
+    if (syncStatus !== "ok" || !syncLines || syncLines.length === 0) return null;
+    const t = currentTime + lyricOffset;
+    if (t < syncLines[0].start) return -1;
+    if (t >= syncLines[syncLines.length - 1].start) {
+      return syncLines.length - 1;
+    }
+    let lo = 0;
+    let hi = syncLines.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (syncLines[mid].start <= t) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  }, [syncStatus, syncLines, currentTime, lyricOffset]);
+
+  const displayLines = syncLines && syncLines.length > 0 ? syncLines : (result?.lines ?? []);
   // Before playback starts there is nothing to highlight; only dim lines once
   // the player actually reports a position.
   const displayActiveIndex = currentTime > 0 && activeIndex != null ? activeIndex : undefined;
@@ -1369,7 +1371,7 @@ export function LyricsApp() {
                     displayActiveIndex != null ? currentTime + lyricOffset : undefined
                   }
                   onLineClick={
-                    syncStatus === "ok" && timedLines && timedLines.length > 0
+                    syncStatus === "ok" && syncLines && syncLines.length > 0
                       ? handleLyricLineClick
                       : undefined
                   }
