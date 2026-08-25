@@ -5,5 +5,7 @@ pydantic==2.10.4
 demucs==4.0.1
 torchcodec>=0.16
 soundfile>=0.12
-yt-dlp==2025.1.15
+# Keep yt-dlp current: YouTube frequently breaks old versions (HTTP 400 /
+# "Precondition check failed"), so an old pin makes generation fail.
+yt-dlp>=2026.8.19
 numpy>=1.26

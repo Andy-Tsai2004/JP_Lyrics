@@ -102,6 +102,8 @@ fi
 # --- 4. Start the service -------------------------------------------------------
 export STEMS_CACHE_DIR="${STEMS_CACHE_DIR:-$STEMS_HOME/cache}"
 export STEMS_CORS_ORIGINS="${STEMS_CORS_ORIGINS:-https://luszechai.github.io,http://localhost:8080}"
+# Make the venv's console scripts (yt-dlp, demucs) visible to the service.
+export PATH="$VENV/bin:$PATH"
 say "Starting stem service on port $PORT …"
 nohup "$VENV/bin/python" -u app.py >"$LOG_DIR/service.log" 2>&1 &
 echo $! > "$STEMS_HOME/service.pid"

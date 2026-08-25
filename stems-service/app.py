@@ -118,6 +118,10 @@ def download_youtube_audio(video_url: str, out_dir: Path) -> Path:
         # On Windows shutil.which returns a backslash path; NEVER shlex.split it
         # (shlex treats backslashes as escapes and mangles C:\Users\...).
         prefix = [ytdlp]
+    elif _find_spec("yt_dlp") is not None:
+        # yt-dlp is installed in this interpreter (the project venv) but not on
+        # PATH (WSL/launcher scripts don't always export the venv bin dir).
+        prefix = [sys.executable, "-m", "yt_dlp"]
     else:
         uvx = shutil.which("uvx") or "uvx"
         prefix = [uvx, "--from", "yt-dlp", "yt-dlp"]
@@ -291,12 +295,24 @@ def status_payload(song_id: str) -> dict:
             "error": None,
         }
     if job:
+        # A stale failure (e.g. an old yt-dlp version) shouldn't disable the
+        # feature forever: after 30 s report "unknown" so the app retries with
+        # a fresh POST on the next visit.
+        state = job.state
+        error = job.error
+        if (
+            state == "error"
+            and job.finished_at is not None
+            and time.time() - job.finished_at > 30
+        ):
+            state = "unknown"
+            error = None
         return {
             "song_id": song_id,
-            "state": job.state,
+            "state": state,
             "full": f"/stems/{song_id}/full",
             "vocals": f"/stems/{song_id}/vocals",
-            "error": job.error,
+            "error": error,
         }
     return {"song_id": song_id, "state": "unknown", "full": None, "vocals": None, "error": None}
 
