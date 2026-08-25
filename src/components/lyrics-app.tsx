@@ -253,14 +253,20 @@ export function LyricsApp() {
   const stemRequestRef = useRef(0);
   // The lyric lines shown to the user (what the host aligns timestamps to).
   const lyricLinesRef = useRef<string[]>([]);
+  // NetEase line-start anchors for the host's alignment (empty when absent).
+  const lyricStartsRef = useRef<number[]>([]);
 
   const resultSource = result?.sourceUrl ?? null;
   const resultTitle = result?.title ?? "";
 
   useEffect(() => {
-    lyricLinesRef.current = (
-      timedLines && timedLines.length > 0 ? timedLines : (result?.lines ?? [])
-    ).map((line) => line.text);
+    const useTimed = timedLines && timedLines.length > 0;
+    lyricLinesRef.current = (useTimed ? timedLines : (result?.lines ?? [])).map(
+      (line) => line.text,
+    );
+    lyricStartsRef.current = useTimed
+      ? timedLines.map((line) => line.start)
+      : [];
   }, [timedLines, result?.lines]);
 
   /** Check stem status; when `trigger`, POST to start generation if unknown. */
@@ -270,6 +276,7 @@ export function LyricsApp() {
       if (!id) return;
       const reqId = ++stemRequestRef.current;
       const lines = lyricLinesRef.current;
+      const starts = lyricStartsRef.current;
       let st = await getStemStatus(id);
       if (trigger && st?.state === "unknown") st = await requestStem(sourceUrl);
       if (reqId !== stemRequestRef.current) return; // song changed / re-triggered
@@ -283,7 +290,7 @@ export function LyricsApp() {
         st.timings !== "pending" &&
         st.timings !== "error"
       ) {
-        st = await requestStem(sourceUrl, lines);
+        st = await requestStem(sourceUrl, lines, starts);
       }
       if (reqId !== stemRequestRef.current) return;
       if (st?.state === "ready") {
@@ -319,7 +326,11 @@ export function LyricsApp() {
     if (!id) return;
     const reqId = ++stemRequestRef.current;
     void (async () => {
-      const st = await requestStem(sourceUrl, lyricLinesRef.current);
+      const st = await requestStem(
+        sourceUrl,
+        lyricLinesRef.current,
+        lyricStartsRef.current,
+      );
       if (reqId !== stemRequestRef.current) return;
       if (st?.state === "ready") {
         setStems(st);

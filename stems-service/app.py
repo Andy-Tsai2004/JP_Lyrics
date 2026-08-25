@@ -219,6 +219,7 @@ class Job:
         self.state = "queued"  # queued | generating | ready | error
         self.error: Optional[str] = None
         self.lines: list[str] = []
+        self.starts: list[float] = []
         self.timings_state: Optional[str] = None  # pending | ready | error
         self.started_at: Optional[float] = None
         self.finished_at: Optional[float] = None
@@ -276,7 +277,8 @@ def _align_job(song_id: str) -> None:
         )
         with jobs_lock:
             lines = list(jobs[song_id].lines)
-        aligned = align_lines(lines, segments)
+            starts = list(jobs[song_id].starts)
+        aligned = align_lines(lines, segments, starts)
         if not aligned:
             raise RuntimeError("Whisper produced no usable word timestamps.")
         timings_path(song_id).write_text(
@@ -321,23 +323,32 @@ def _generate(song_id: str) -> None:
             job.finished_at = time.time()
 
 
-def ensure_job(song_id: str, song_url: str, lines: Optional[list[str]] = None) -> Job:
+def ensure_job(
+    song_id: str,
+    song_url: str,
+    lines: Optional[list[str]] = None,
+    starts: Optional[list[float]] = None,
+) -> Job:
     schedule_align = False
     with jobs_lock:
         existing = jobs.get(song_id)
         if existing and existing.state in ("queued", "generating"):
             if lines:
                 existing.lines = lines
+            if starts:
+                existing.starts = starts
             return existing
         if stem_ready(song_id):
             job = Job(song_url)
             job.state = "ready"
             job.lines = lines or []
+            job.starts = starts or []
             jobs[song_id] = job
             schedule_align = True
         else:
             job = Job(song_url)
             job.lines = lines or []
+            job.starts = starts or []
             jobs[song_id] = job
     if schedule_align:
         maybe_schedule_align(song_id)
@@ -365,6 +376,7 @@ app.add_middleware(
 class StemRequest(BaseModel):
     url: str
     lines: Optional[list[str]] = None
+    starts: Optional[list[float]] = None
 
 
 def status_payload(song_id: str) -> dict:
@@ -430,7 +442,7 @@ def stem_request(req: StemRequest) -> dict:
     song_id = uta_net_song_id(req.url)
     if not song_id:
         raise HTTPException(status_code=400, detail="Not a Uta-Net song URL (need /song/<id>/).")
-    ensure_job(song_id, req.url, req.lines)
+    ensure_job(song_id, req.url, req.lines, req.starts)
     return status_payload(song_id)
 
 

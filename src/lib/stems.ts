@@ -158,6 +158,7 @@ export async function getStemStatus(songId: string): Promise<StemInfo | null> {
 export async function requestStem(
   url: string,
   lines?: string[],
+  starts?: number[],
 ): Promise<StemInfo | null> {
   const base = await resolveApiBase();
   if (!base) return null;
@@ -165,7 +166,11 @@ export async function requestStem(
     const res = await fetch(`${base}/api/stem`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, ...(lines && lines.length > 0 ? { lines } : {}) }),
+      body: JSON.stringify({
+        url,
+        ...(lines && lines.length > 0 ? { lines } : {}),
+        ...(starts && starts.length > 0 ? { starts } : {}),
+      }),
     });
     if (!res.ok) return null;
     return normalize(await res.json(), base);
