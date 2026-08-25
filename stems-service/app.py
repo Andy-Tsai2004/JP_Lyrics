@@ -35,6 +35,7 @@ Env
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -52,12 +53,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from _align import align_lines
+
 # ---- tuning -------------------------------------------------------------
 
 CACHE_DIR = Path(os.environ.get("STEMS_CACHE_DIR", "./stems_cache")).resolve()
 MODEL = os.environ.get("STEMS_MODEL", "htdemucs")
 DEVICE = os.environ.get("STEMS_DEVICE", "cpu")  # or "cuda" if the host has a GPU
 WORKERS = max(1, int(os.environ.get("STEMS_WORKERS", "1")))
+WHISPER_MODEL = os.environ.get("STEMS_WHISPER_MODEL", "small")
 CORS_ORIGINS = [
     o.strip()
     for o in os.environ.get("STEMS_CORS_ORIGINS", "*").split(",")
@@ -80,6 +84,23 @@ SONG_ID_RE = re.compile(r"/song/(\d+)")
 # The final cached files, per song id.
 FULL_SUFFIX = "_full.m4a"
 OFFVOCAL_SUFFIX = "_offvocal.mp3"
+TIMINGS_SUFFIX = "_timings.json"
+
+_whisper = None
+_whisper_lock = threading.Lock()
+
+
+def get_whisper():
+    """Lazily load faster-whisper (first call downloads the model ~460 MB)."""
+    global _whisper
+    if _whisper is None:
+        with _whisper_lock:
+            if _whisper is None:
+                from faster_whisper import WhisperModel
+
+                compute = "int8" if DEVICE == "cpu" else "float16"
+                _whisper = WhisperModel(WHISPER_MODEL, device=DEVICE, compute_type=compute)
+    return _whisper
 
 
 def _find_spec(name: str):
@@ -197,6 +218,8 @@ class Job:
         self.song_url = song_url
         self.state = "queued"  # queued | generating | ready | error
         self.error: Optional[str] = None
+        self.lines: list[str] = []
+        self.timings_state: Optional[str] = None  # pending | ready | error
         self.started_at: Optional[float] = None
         self.finished_at: Optional[float] = None
 
@@ -216,8 +239,58 @@ def offvocal_path(song_id: str) -> Path:
     return CACHE_DIR / f"{song_id}{OFFVOCAL_SUFFIX}"
 
 
+def timings_path(song_id: str) -> Path:
+    return CACHE_DIR / f"{song_id}{TIMINGS_SUFFIX}"
+
+
 def stem_ready(song_id: str) -> bool:
     return full_path(song_id).exists() and offvocal_path(song_id).exists()
+
+
+def maybe_schedule_align(song_id: str) -> None:
+    """Queue word-timestamp alignment when lyric lines are known and no
+    timings exist yet. Runs Whisper on the cached full mix, once per song."""
+    with jobs_lock:
+        job = jobs.get(song_id)
+        if not job or not job.lines:
+            return
+        if timings_path(song_id).exists():
+            job.timings_state = "ready"
+            return
+        if job.timings_state == "pending":
+            return
+        job.timings_state = "pending"
+    executor.submit(_align_job, song_id)
+
+
+def _align_job(song_id: str) -> None:
+    try:
+        audio = full_path(song_id)
+        if not audio.exists():
+            raise RuntimeError("Full mix not available for alignment.")
+        segments, _ = get_whisper().transcribe(
+            str(audio),
+            language="ja",
+            word_timestamps=True,
+            vad_filter=False,
+        )
+        with jobs_lock:
+            lines = list(jobs[song_id].lines)
+        aligned = align_lines(lines, segments)
+        if not aligned:
+            raise RuntimeError("Whisper produced no usable word timestamps.")
+        timings_path(song_id).write_text(
+            json.dumps({"lines": aligned}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        with jobs_lock:
+            if song_id in jobs:
+                jobs[song_id].timings_state = "ready"
+    except Exception as exc:  # noqa: BLE001 — report to the caller, keep stem usable
+        with jobs_lock:
+            if song_id in jobs:
+                jobs[song_id].timings_state = "error"
+                jobs[song_id].error = str(exc)
 
 
 def _generate(song_id: str) -> None:
@@ -240,6 +313,7 @@ def _generate(song_id: str) -> None:
         with jobs_lock:
             job.state = "ready"
             job.finished_at = time.time()
+        maybe_schedule_align(song_id)
     except Exception as exc:  # noqa: BLE001 — report any failure to the caller
         with jobs_lock:
             job.state = "error"
@@ -247,23 +321,32 @@ def _generate(song_id: str) -> None:
             job.finished_at = time.time()
 
 
-def ensure_job(song_id: str, song_url: str) -> Job:
+def ensure_job(song_id: str, song_url: str, lines: Optional[list[str]] = None) -> Job:
+    schedule_align = False
     with jobs_lock:
         existing = jobs.get(song_id)
         if existing and existing.state in ("queued", "generating"):
+            if lines:
+                existing.lines = lines
             return existing
         if stem_ready(song_id):
             job = Job(song_url)
             job.state = "ready"
+            job.lines = lines or []
             jobs[song_id] = job
-            return job
-        job = Job(song_url)
-        jobs[song_id] = job
-    queue_lock.acquire()
-    try:
-        executor.submit(_generate, song_id)
-    finally:
-        queue_lock.release()
+            schedule_align = True
+        else:
+            job = Job(song_url)
+            job.lines = lines or []
+            jobs[song_id] = job
+    if schedule_align:
+        maybe_schedule_align(song_id)
+    else:
+        queue_lock.acquire()
+        try:
+            executor.submit(_generate, song_id)
+        finally:
+            queue_lock.release()
     return job
 
 
@@ -281,17 +364,24 @@ app.add_middleware(
 
 class StemRequest(BaseModel):
     url: str
+    lines: Optional[list[str]] = None
 
 
 def status_payload(song_id: str) -> dict:
     with jobs_lock:
         job = jobs.get(song_id)
+    timings = "none"
+    if job and job.timings_state:
+        timings = job.timings_state
+    elif timings_path(song_id).exists():
+        timings = "ready"
     if stem_ready(song_id):
         return {
             "song_id": song_id,
             "state": "ready",
             "full": f"/stems/{song_id}/full",
             "vocals": f"/stems/{song_id}/vocals",
+            "timings": timings,
             "error": None,
         }
     if job:
@@ -312,9 +402,17 @@ def status_payload(song_id: str) -> dict:
             "state": state,
             "full": f"/stems/{song_id}/full",
             "vocals": f"/stems/{song_id}/vocals",
+            "timings": timings,
             "error": error,
         }
-    return {"song_id": song_id, "state": "unknown", "full": None, "vocals": None, "error": None}
+    return {
+        "song_id": song_id,
+        "state": "unknown",
+        "full": None,
+        "vocals": None,
+        "timings": timings,
+        "error": None,
+    }
 
 
 @app.get("/api/health")
@@ -332,7 +430,7 @@ def stem_request(req: StemRequest) -> dict:
     song_id = uta_net_song_id(req.url)
     if not song_id:
         raise HTTPException(status_code=400, detail="Not a Uta-Net song URL (need /song/<id>/).")
-    ensure_job(song_id, req.url)
+    ensure_job(song_id, req.url, req.lines)
     return status_payload(song_id)
 
 
@@ -350,6 +448,14 @@ def serve_vocals(song_id: str) -> FileResponse:
     if not p.exists():
         raise HTTPException(status_code=404, detail="Off-vocal stem not ready yet.")
     return FileResponse(p, media_type="audio/mpeg")
+
+
+@app.get("/api/stem/{song_id}/timings")
+def stem_timings(song_id: str) -> dict:
+    p = timings_path(song_id)
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="Word timings not ready yet.")
+    return json.loads(p.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

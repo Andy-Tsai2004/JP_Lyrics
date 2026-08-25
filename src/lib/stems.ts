@@ -77,10 +77,22 @@ export async function isStemsServiceAvailable(): Promise<boolean> {
 }
 
 export type StemInfo =
-  | { state: "ready"; full: string; vocals: string; error?: never }
-  | { state: "generating"; full?: never; vocals?: never; error?: never }
-  | { state: "error"; full?: never; vocals?: never; error: string }
-  | { state: "unknown"; full?: never; vocals?: never; error?: never };
+  | { state: "ready"; full: string; vocals: string; timings?: string; error?: never }
+  | { state: "generating"; timings?: string; full?: never; vocals?: never; error?: never }
+  | { state: "error"; timings?: string; full?: never; vocals?: never; error: string }
+  | { state: "unknown"; timings?: string; full?: never; vocals?: never; error?: never };
+
+/** Word-level timings computed in the WSL host (per lyric line). */
+export type StemTimingLine = {
+  index: number;
+  text: string;
+  start: number;
+  end: number;
+  /** Seconds for each character of `text` (original line, punctuation kept). */
+  char_times: number[];
+};
+
+export type StemTimings = { lines: StemTimingLine[] };
 
 /** Extract the Uta-Net song id from a song URL, e.g. /song/397348/ -> "397348". */
 export function utaNetSongId(url: string): string | null {
@@ -93,20 +105,36 @@ function join(base: string, p?: string): string | undefined {
 }
 
 function normalize(data: unknown, base: string): StemInfo | null {
-  const d = data as { state?: string; full?: string; vocals?: string; error?: string } | null;
+  const d = data as {
+    state?: string;
+    full?: string;
+    vocals?: string;
+    error?: string;
+    timings?: string;
+  } | null;
   if (!d || typeof d.state !== "string") return null;
+  const timings = typeof d.timings === "string" ? d.timings : undefined;
   switch (d.state) {
     case "ready":
       return d.full && d.vocals
-        ? { state: "ready", full: join(base, d.full)!, vocals: join(base, d.vocals)! }
+        ? {
+            state: "ready",
+            full: join(base, d.full)!,
+            vocals: join(base, d.vocals)!,
+            ...(timings ? { timings } : {}),
+          }
         : null;
     case "generating":
     case "queued":
-      return { state: "generating" };
+      return { state: "generating", ...(timings ? { timings } : {}) };
     case "error":
-      return { state: "error", error: d.error ?? "Stem generation failed." };
+      return {
+        state: "error",
+        error: d.error ?? "Stem generation failed.",
+        ...(timings ? { timings } : {}),
+      };
     default:
-      return { state: "unknown" };
+      return { state: "unknown", ...(timings ? { timings } : {}) };
   }
 }
 
@@ -123,18 +151,38 @@ export async function getStemStatus(songId: string): Promise<StemInfo | null> {
   }
 }
 
-/** Ask the service to (re)generate a song's stem. Returns the current state. */
-export async function requestStem(url: string): Promise<StemInfo | null> {
+/**
+ * Ask the service to (re)generate a song's stem (and, when `lines` are given,
+ * compute word-level timestamps for them). Returns the current state.
+ */
+export async function requestStem(
+  url: string,
+  lines?: string[],
+): Promise<StemInfo | null> {
   const base = await resolveApiBase();
   if (!base) return null;
   try {
     const res = await fetch(`${base}/api/stem`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, ...(lines && lines.length > 0 ? { lines } : {}) }),
     });
     if (!res.ok) return null;
     return normalize(await res.json(), base);
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch the word-level timings computed by the host service. */
+export async function fetchStemTimings(songId: string): Promise<StemTimings | null> {
+  const base = await resolveApiBase();
+  if (!base) return null;
+  try {
+    const res = await fetch(`${base}/api/stem/${songId}/timings`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as StemTimings | null;
+    return data && Array.isArray(data.lines) ? data : null;
   } catch {
     return null;
   }

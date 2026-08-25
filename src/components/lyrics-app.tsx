@@ -48,11 +48,13 @@ import {
 import type { LyricsResult } from "@/lib/lyrics/types";
 import { cn } from "@/lib/utils";
 import {
+  fetchStemTimings,
   getStemStatus,
   isStemsServiceAvailable,
   requestStem,
   utaNetSongId,
   type StemInfo,
+  type StemTimings,
 } from "@/lib/stems";
 
 const BAHAMUT_SAMPLE_URL = "https://home.gamer.com.tw/artwork.php?sn=6306141";
@@ -242,13 +244,23 @@ export function LyricsApp() {
   const [libraryView, setLibraryView] = useState<LibraryView | null>(null);
   // Auto-detected off-vocal stem (from the generator service) for the loaded song.
   const [stems, setStems] = useState<StemInfo | null>(null);
+  // Word-level timings computed by the host (null = none yet).
+  const [stemTimings, setStemTimings] = useState<StemTimings | null>(null);
   // Whether a stem service is configured (null = still checking).
   const [stemsAvailable, setStemsAvailable] = useState<boolean | null>(null);
   // Incremented on song change / re-trigger to invalidate in-flight polls.
   const stemRequestRef = useRef(0);
+  // The lyric lines shown to the user (what the host aligns timestamps to).
+  const lyricLinesRef = useRef<string[]>([]);
 
   const resultSource = result?.sourceUrl ?? null;
   const resultTitle = result?.title ?? "";
+
+  useEffect(() => {
+    lyricLinesRef.current = (
+      timedLines && timedLines.length > 0 ? timedLines : (result?.lines ?? [])
+    ).map((line) => line.text);
+  }, [timedLines, result?.lines]);
 
   /** Check stem status; when `trigger`, POST to start generation if unknown. */
   const pollStem = useCallback(
@@ -256,11 +268,34 @@ export function LyricsApp() {
       const id = utaNetSongId(sourceUrl);
       if (!id) return;
       const reqId = ++stemRequestRef.current;
+      const lines = lyricLinesRef.current;
       let st = await getStemStatus(id);
-      if (trigger && st?.state === "unknown") st = await requestStem(sourceUrl);
+      if (trigger && st?.state === "unknown") st = await requestStem(sourceUrl, lines);
       if (reqId !== stemRequestRef.current) return; // song changed / re-triggered
+      // Audio exists but no word timings yet — ask the host to align (once).
+      if (
+        lines.length > 0 &&
+        st &&
+        (st.state === "ready" || st.state === "generating") &&
+        st.timings !== "ready" &&
+        st.timings !== "pending" &&
+        st.timings !== "error"
+      ) {
+        st = await requestStem(sourceUrl, lines);
+      }
+      if (reqId !== stemRequestRef.current) return;
       if (st?.state === "ready") {
         setStems(st);
+        if (lines.length > 0 && st.timings === "ready") {
+          const timings = await fetchStemTimings(id);
+          if (reqId === stemRequestRef.current && timings) setStemTimings(timings);
+          return;
+        }
+        if (lines.length > 0 && st.timings === "pending") {
+          setTimeout(() => {
+            if (reqId === stemRequestRef.current) void pollStem(sourceUrl, false);
+          }, 4000);
+        }
         return;
       }
       if (st?.state === "generating") {
@@ -290,6 +325,7 @@ export function LyricsApp() {
   // another tab started it). Generation itself only starts on user click.
   useEffect(() => {
     setStems(null);
+    setStemTimings(null);
     const sourceUrl = result?.sourceUrl ?? "";
     if (!sourceUrl || !utaNetSongId(sourceUrl)) return;
     void pollStem(sourceUrl, false);
@@ -633,7 +669,32 @@ export function LyricsApp() {
     return lo;
   }, [syncStatus, timedLines, currentTime, lyricOffset]);
 
-  const displayLines = timedLines && timedLines.length > 0 ? timedLines : (result?.lines ?? []);
+  // Merge the host-computed word timings into the synced lyric tokens so the
+  // UI can highlight each word as it is sung.
+  const displayLines = useMemo(() => {
+    if (!timedLines || timedLines.length === 0 || !stemTimings) {
+      return timedLines && timedLines.length > 0 ? timedLines : (result?.lines ?? []);
+    }
+    const byIndex = new Map(stemTimings.lines.map((line) => [line.index, line]));
+    let changed = false;
+    const merged = timedLines.map((line, i) => {
+      const t = byIndex.get(i);
+      if (!t || t.text !== line.text || t.char_times.length !== line.text.length) {
+        return line;
+      }
+      changed = true;
+      let offset = 0;
+      const tokens = line.tokens.map((token) => {
+        const len = token.text.length;
+        const start = t.char_times[offset] ?? line.start;
+        const end = t.char_times[offset + Math.max(len - 1, 0)] ?? line.end;
+        offset += len;
+        return { ...token, start, end };
+      });
+      return { ...line, tokens };
+    });
+    return changed ? merged : timedLines;
+  }, [timedLines, stemTimings, result?.lines]);
   // Before playback starts there is nothing to highlight; only dim lines once
   // the player actually reports a position.
   const displayActiveIndex = currentTime > 0 && activeIndex != null ? activeIndex : undefined;
@@ -1128,6 +1189,13 @@ export function LyricsApp() {
                 }
                 ref={songPlayerRef}
               />
+
+              {stems?.state === "ready" && stems.timings === "pending" ? (
+                <p className="flex items-center gap-2 text-xs text-muted">
+                  <Loader2 className="size-3.5 animate-spin" />
+                  Aligning word timestamps…
+                </p>
+              ) : null}
 
               {karaokeError && !karaoke && !showKaraokePicker ? (
                 <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-danger">

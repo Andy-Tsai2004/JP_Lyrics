@@ -9,3 +9,5 @@ soundfile>=0.12
 # "Precondition check failed"), so an old pin makes generation fail.
 yt-dlp>=2026.8.19
 numpy>=1.26
+# Word-level lyric alignment (Whisper transcription + DP alignment).
+faster-whisper>=1.2.0
