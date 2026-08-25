@@ -273,6 +273,19 @@ export function LyricsApp() {
       let st = await getStemStatus(id);
       if (trigger && st?.state === "unknown") st = await requestStem(sourceUrl);
       if (reqId !== stemRequestRef.current) return; // song changed / re-triggered
+      // Auto-align: once the audio exists, ask the host to compute word
+      // timestamps (skip when already aligned / aligning / failed).
+      if (
+        lines.length > 0 &&
+        st &&
+        (st.state === "ready" || st.state === "generating") &&
+        st.timings !== "ready" &&
+        st.timings !== "pending" &&
+        st.timings !== "error"
+      ) {
+        st = await requestStem(sourceUrl, lines);
+      }
+      if (reqId !== stemRequestRef.current) return;
       if (st?.state === "ready") {
         setStems(st);
         if (lines.length > 0 && st.timings === "ready") {
@@ -1204,8 +1217,7 @@ export function LyricsApp() {
                 </p>
               ) : null}
               {stems?.state === "ready" &&
-              stems.timings !== "ready" &&
-              stems.timings !== "pending" &&
+              stems.timings === "error" &&
               ((timedLines && timedLines.length > 0) || (result?.lines ?? []).length > 0) ? (
                 <button
                   type="button"
@@ -1242,7 +1254,7 @@ export function LyricsApp() {
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-border bg-surface px-3 py-2 text-xs text-muted">
                   <span className="flex items-center gap-1.5">
                     <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
-                    Synced with NetEase timestamps
+                    {stemTimings ? "Aligned word-by-word" : "Synced with NetEase timestamps"}
                   </span>
                   <div
                     className="flex flex-wrap items-center gap-2"
