@@ -14,7 +14,12 @@ export default tseslint.config(
       ".vercel/**",
       ".nitro/**",
       "node_modules/**",
+      ".vite-cache/**",
+      "coverage/**",
+      "public/kuromoji-dict/**",
       "src/routeTree.gen.ts",
+      ".venv-stems/**",
+      "stems-service/.venv/**",
     ],
   },
   js.configs.recommended,
@@ -31,10 +36,7 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
-      "react-refresh/only-export-components": [
-        "warn",
-        { allowConstantExport: true },
-      ],
+      "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
       "@typescript-eslint/no-unused-vars": [
         "warn",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },

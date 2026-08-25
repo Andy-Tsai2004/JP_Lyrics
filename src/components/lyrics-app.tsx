@@ -1,10 +1,13 @@
 import {
   ArrowLeft,
+  Check,
   ChevronDown,
   ChevronRight,
+  Eraser,
   ExternalLink,
   Heart,
   History,
+  Languages,
   Loader2,
   Minus,
   Music2,
@@ -13,7 +16,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { RubyAssistMode } from "@/components/lyrics-display";
+import type { KatakanaAidMode } from "@/components/lyrics-display";
 import { LibraryDrawer, type LibraryView } from "@/components/song-history";
 import { SongPlayer } from "@/components/song-player";
 import type { SongPlayerHandle } from "@/components/song-player";
@@ -58,6 +61,7 @@ import {
   type StemInfo,
   type StemTimings,
 } from "@/lib/stems";
+import { useI18n, localeName, LOCALES, type Locale } from "@/lib/i18n";
 
 const BAHAMUT_SAMPLE_URL = "https://home.gamer.com.tw/artwork.php?sn=6306141";
 const UTANET_SAMPLE_URL = "https://www.uta-net.com/song/397348/";
@@ -88,14 +92,15 @@ function Pagination({
   totalPages: number;
   onChange: (page: number) => void;
 }) {
+  const { t } = useI18n();
   if (totalPages <= 1) return null;
   return (
-    <nav className="mt-3 flex flex-wrap items-center gap-1.5" aria-label="Result pages">
+    <nav className="mt-3 flex flex-wrap items-center gap-1.5" aria-label={t("pagination.pages")}>
       <button
         type="button"
         disabled={page <= 1}
         onClick={() => onChange(page - 1)}
-        aria-label="Previous page"
+        aria-label={t("pagination.prev")}
         className="flex size-8 items-center justify-center rounded-lg border border-border text-sm text-muted transition-colors hover:text-foreground disabled:opacity-40"
       >
         ‹
@@ -126,7 +131,7 @@ function Pagination({
         type="button"
         disabled={page >= totalPages}
         onClick={() => onChange(page + 1)}
-        aria-label="Next page"
+        aria-label={t("pagination.next")}
         className="flex size-8 items-center justify-center rounded-lg border border-border text-sm text-muted transition-colors hover:text-foreground disabled:opacity-40"
       >
         ›
@@ -146,6 +151,7 @@ function SongResultRow({
   onToggleFavorite: (result: UtaNetSearchResult) => void;
   onOpen: (result: UtaNetSearchResult) => void;
 }) {
+  const { t } = useI18n();
   return (
     <li className="flex items-stretch rounded-xl border border-border bg-surface-2 transition-colors hover:border-foreground/20">
       <button
@@ -165,7 +171,9 @@ function SongResultRow({
         type="button"
         aria-pressed={favorite}
         aria-label={
-          favorite ? `Remove ${result.title} from favorites` : `Add ${result.title} to favorites`
+          favorite
+            ? t("song.unfavAria", { title: result.title })
+            : t("song.favAria", { title: result.title })
         }
         onClick={() => onToggleFavorite(result)}
         className={cn(
@@ -179,7 +187,7 @@ function SongResultRow({
         href={result.songUrl}
         target="_blank"
         rel="noopener noreferrer"
-        aria-label={`Open ${result.title} on Uta-Net`}
+        aria-label={t("song.openAria", { title: result.title })}
         className="flex shrink-0 items-center px-3 text-subtle hover:text-foreground"
       >
         <ExternalLink className="size-4" />
@@ -198,6 +206,35 @@ function dedupeResults(results: UtaNetSearchResult[]): UtaNetSearchResult[] {
 }
 
 export function LyricsApp() {
+  const { locale, setLocale, t } = useI18n();
+  const [langOpen, setLangOpen] = useState(false);
+  const langMenuRef = useRef<HTMLDivElement>(null);
+
+  const switchLocale = useCallback(
+    (next: Locale) => {
+      setLocale(next);
+      setLangOpen(false);
+    },
+    [setLocale],
+  );
+
+  // Close the language menu on outside click or Escape.
+  useEffect(() => {
+    if (!langOpen) return;
+    function onPointerDown(event: MouseEvent) {
+      if (!langMenuRef.current?.contains(event.target as Node)) setLangOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setLangOpen(false);
+    }
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [langOpen]);
+
   const [mode, setMode] = useState<"search" | "paste">("search");
   const [songQuery, setSongQuery] = useState("");
   const [artistQuery, setArtistQuery] = useState("");
@@ -227,7 +264,8 @@ export function LyricsApp() {
   const imeEnabledRef = useRef(imeEnabled);
   const [url, setUrl] = useState(UTANET_SAMPLE_URL);
   const [showFurigana, setShowFurigana] = useState(true);
-  const [rubyAssistMode, setRubyAssistMode] = useState<RubyAssistMode>("hiragana");
+  const [katakanaAid, setKatakanaAid] = useState<KatakanaAidMode>("hiragana");
+  const [romajiMode, setRomajiMode] = useState(false);
   const [fontSizeRem, setFontSizeRem] = useState(1.35);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -487,6 +525,45 @@ export function LyricsApp() {
     }
   }
 
+  function clearSearch() {
+    setSongQuery("");
+    setArtistQuery("");
+    setLyricsQuery("");
+    if (songInputRef.current) songInputRef.current.value = "";
+    if (artistInputRef.current) artistInputRef.current.value = "";
+    if (lyricsInputRef.current) lyricsInputRef.current.value = "";
+    setSearchResult(null);
+    setArtistResults(null);
+    setArtistSongs(null);
+    setSearchError(null);
+    setSearchKind("song");
+    setSongPage(1);
+    setArtistPage(1);
+    setArtistSongPage(1);
+  }
+
+  // Romaji mode and the ruby/katakana views are mutually exclusive: enabling
+  // one switches the others off so only one reading style is shown at a time.
+  function handleToggleShowRuby() {
+    const next = !showFurigana;
+    setShowFurigana(next);
+    if (next) setRomajiMode(false);
+  }
+
+  function handleKatakanaAidChange(value: KatakanaAidMode) {
+    setKatakanaAid(value);
+    if (value !== "off") setRomajiMode(false);
+  }
+
+  function handleToggleRomaji() {
+    const next = !romajiMode;
+    setRomajiMode(next);
+    if (next) {
+      setShowFurigana(false);
+      setKatakanaAid("off");
+    }
+  }
+
   async function runSongOnlySearch(song: string) {
     try {
       const response = await searchUtaNet(song);
@@ -657,7 +734,7 @@ export function LyricsApp() {
     setKaraokeCandidates(candidates);
     if (candidates.length === 0) {
       setKaraoke(false);
-      setKaraokeError("找不到可用的卡拉OK／伴奏影片。");
+      setKaraokeError(t("karaoke.error"));
     }
   }
 
@@ -751,7 +828,7 @@ export function LyricsApp() {
         <button
           type="button"
           onClick={() => setLibraryView("favorites")}
-          aria-label="Open favorites"
+          aria-label={t("toolbar.openFavorites")}
           className="flex min-h-11 items-center gap-2 rounded-xl border border-border bg-surface px-3.5 text-sm font-medium text-foreground transition-colors hover:border-foreground/20"
         >
           <Heart
@@ -761,7 +838,7 @@ export function LyricsApp() {
             )}
             strokeWidth={1.75}
           />
-          Favorites
+          {t("toolbar.favorites")}
           {favorites.favorites.length > 0 ? (
             <span className="rounded-full bg-danger/15 px-2 py-0.5 text-xs font-semibold text-danger">
               {favorites.favorites.length}
@@ -771,38 +848,82 @@ export function LyricsApp() {
         <button
           type="button"
           onClick={() => setLibraryView("history")}
-          aria-label="Open history"
+          aria-label={t("toolbar.openHistory")}
           className="flex min-h-11 items-center gap-2 rounded-xl border border-border bg-surface px-3.5 text-sm font-medium text-foreground transition-colors hover:border-foreground/20"
         >
           <History className="size-4 text-muted" strokeWidth={1.75} />
-          History
+          {t("toolbar.history")}
           {history.records.length > 0 ? (
             <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-semibold text-primary-foreground">
               {history.records.length}
             </span>
           ) : null}
         </button>
+        <div ref={langMenuRef} className="relative ml-auto">
+          <button
+            type="button"
+            onClick={() => setLangOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={langOpen}
+            aria-label={t("lang.choose")}
+            className="flex min-h-11 items-center gap-2 rounded-xl border border-border bg-surface px-3.5 text-sm font-medium text-foreground transition-colors hover:border-foreground/20"
+          >
+            <Languages className="size-4 text-muted" strokeWidth={1.75} />
+            {localeName[locale]}
+            <ChevronDown
+              className={cn(
+                "size-4 text-muted transition-transform duration-150",
+                langOpen && "rotate-180",
+              )}
+              strokeWidth={1.75}
+            />
+          </button>
+          {langOpen ? (
+            <div
+              role="menu"
+              className="absolute right-0 top-full z-40 mt-1.5 min-w-40 overflow-hidden rounded-xl border border-border bg-bg p-1 shadow-2xl"
+            >
+              {LOCALES.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  role="menuitem"
+                  aria-current={option === locale ? "true" : undefined}
+                  onClick={() => switchLocale(option)}
+                  className={cn(
+                    "flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-sm transition-colors",
+                    option === locale
+                      ? "bg-surface-2 text-foreground"
+                      : "text-muted hover:bg-surface-2 hover:text-foreground",
+                  )}
+                >
+                  {localeName[option]}
+                  {option === locale ? <Check className="size-4 text-primary" /> : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <div className="px-4 pb-10 sm:px-6 sm:pb-14 lg:px-8">
         <div className="flex min-w-0 flex-col gap-8 lg:mx-auto lg:w-[75%] lg:max-w-[67.5rem]">
           <header className="space-y-3 lg:text-center">
             <p className="text-xs font-medium tracking-[0.18em] text-muted uppercase">
-              歌詞ビューア
+              {t("app.label")}
             </p>
             <h1 className="font-serif text-3xl font-medium tracking-tight text-balance text-foreground sm:text-4xl">
-              Japanese Lyrics Viewer
+              {t("app.title")}
             </h1>
             <p className="max-w-xl text-sm leading-relaxed text-pretty text-muted lg:mx-auto">
-              Search Uta-Net for a song, or paste a Bahamut artwork / Uta-Net song link. The viewer
-              keeps only the Japanese lines and places ruby readings above the lyrics.
+              {t("app.subtitle")}
             </p>
           </header>
 
           <div className="rounded-2xl border border-border bg-surface p-3 sm:p-3">
             <div
               role="tablist"
-              aria-label="Load lyrics"
+              aria-label={t("tabs.loadLyrics")}
               className="mb-2 flex gap-1 border-b border-border pb-2"
             >
               <button
@@ -818,7 +939,7 @@ export function LyricsApp() {
                 )}
               >
                 <Search className="size-4" strokeWidth={1.75} />
-                Search Uta-Net
+                {t("tab.search")}
               </button>
               <button
                 type="button"
@@ -832,7 +953,7 @@ export function LyricsApp() {
                     : "text-muted hover:text-foreground",
                 )}
               >
-                Paste link
+                {t("tab.paste")}
               </button>
             </div>
 
@@ -848,26 +969,26 @@ export function LyricsApp() {
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                     <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center">
                       <label className="sr-only" htmlFor="uta-search">
-                        Song name
+                        {t("search.songName")}
                       </label>
                       <Input
                         ref={songInputRef}
                         id="uta-search"
                         value={songQuery}
                         onChange={(e) => setSongQuery(e.target.value)}
-                        placeholder="Song name"
+                        placeholder={t("search.songName")}
                         maxLength={100}
                         className="border-0 bg-transparent shadow-none focus-visible:ring-0 sm:flex-1"
                       />
                       <label className="sr-only" htmlFor="uta-artist">
-                        Artist name
+                        {t("search.artist")}
                       </label>
                       <Input
                         ref={artistInputRef}
                         id="uta-artist"
                         value={artistQuery}
                         onChange={(e) => setArtistQuery(e.target.value)}
-                        placeholder="Artist"
+                        placeholder={t("search.artist")}
                         maxLength={100}
                         className="border-0 bg-transparent shadow-none focus-visible:ring-0 sm:flex-1"
                       />
@@ -876,11 +997,7 @@ export function LyricsApp() {
                       type="button"
                       aria-pressed={imeEnabled}
                       onClick={toggleIme}
-                      title={
-                        imeEnabled
-                          ? "Japanese input on — romaji becomes kana as you type (Ctrl+;)"
-                          : "Japanese input off — type English directly (Ctrl+;)"
-                      }
+                      title={imeEnabled ? t("search.imeOn") : t("search.imeOff")}
                       aria-keyshortcuts="Control+;"
                       className={cn(
                         "flex size-11 shrink-0 items-center justify-center rounded-lg border text-sm font-medium transition-colors",
@@ -902,23 +1019,40 @@ export function LyricsApp() {
                       {searching ? (
                         <>
                           <Loader2 className="size-4 animate-spin" />
-                          Searching
+                          {t("search.searching")}
                         </>
                       ) : (
-                        "Search"
+                        t("search.search")
                       )}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={clearSearch}
+                      disabled={
+                        searching ||
+                        (!songQuery.trim() &&
+                          !artistQuery.trim() &&
+                          !lyricsQuery.trim() &&
+                          !searchResult &&
+                          !artistResults)
+                      }
+                      className="shrink-0"
+                    >
+                      <Eraser className="size-4" strokeWidth={1.75} />
+                      {t("search.clear")}
                     </Button>
                   </div>
                   <div className="flex min-w-0 flex-1 items-center gap-3">
                     <label className="sr-only" htmlFor="uta-lyrics">
-                      Lyrics
+                      {t("search.lyrics")}
                     </label>
                     <Input
                       ref={lyricsInputRef}
                       id="uta-lyrics"
                       value={lyricsQuery}
                       onChange={(e) => setLyricsQuery(e.target.value)}
-                      placeholder="Lyrics"
+                      placeholder={t("search.lyrics")}
                       maxLength={100}
                       className="flex-1 border-0 bg-transparent shadow-none focus-visible:ring-0"
                     />
@@ -942,7 +1076,7 @@ export function LyricsApp() {
                         className="inline-flex min-h-9 items-center gap-1.5 text-xs text-muted underline-offset-4 hover:text-foreground hover:underline"
                       >
                         <ArrowLeft className="size-3.5" strokeWidth={1.75} />
-                        Back to search results
+                        {t("artist.backToSearch")}
                       </button>
                       <a
                         href={artistSongs.artistUrl}
@@ -951,17 +1085,17 @@ export function LyricsApp() {
                         className="inline-flex min-h-9 items-center gap-1.5 text-xs text-muted underline-offset-4 hover:text-foreground hover:underline"
                       >
                         <ExternalLink className="size-3.5" strokeWidth={1.75} />
-                        Open artist page
+                        {t("artist.openPage")}
                       </a>
                     </div>
-                    <p className="text-xs tracking-wide text-muted">Songs by artist</p>
+                    <p className="text-xs tracking-wide text-muted">{t("artist.songsBy")}</p>
                     <h3 className="mb-3 text-sm font-medium text-foreground">
                       {artistSongs.artist}
                     </h3>
                     {artistLoading ? (
                       <p className="flex items-center gap-2 py-4 text-sm text-muted">
                         <Loader2 className="size-4 animate-spin" />
-                        Loading songs…
+                        {t("artist.loading")}
                       </p>
                     ) : artistError ? (
                       <div
@@ -972,7 +1106,9 @@ export function LyricsApp() {
                       </div>
                     ) : (
                       <>
-                        <p className="mb-2 text-xs text-muted">{artistSongs.songs.length} songs</p>
+                        <p className="mb-2 text-xs text-muted">
+                          {t("artist.songsCount", { n: artistSongs.songs.length })}
+                        </p>
                         <ul className="flex flex-col gap-2">
                           {visibleArtistSongs.map((song) => (
                             <SongResultRow
@@ -1027,14 +1163,14 @@ export function LyricsApp() {
                       <>
                         {searchResult.results.length === 0 ? (
                           <p className="text-sm leading-relaxed text-muted">
-                            No songs found for “
-                            {songQuery.trim() || artistQuery.trim() || lyricsQuery.trim()}” on
-                            Uta-Net.
+                            {t("artist.noResults", {
+                              query: songQuery.trim() || artistQuery.trim() || lyricsQuery.trim(),
+                            })}
                           </p>
                         ) : (
                           <>
                             <p className="mb-2 text-xs text-muted">
-                              {searchResult.results.length} songs
+                              {t("artist.songsCount", { n: searchResult.results.length })}
                             </p>
                             <ul className="flex flex-col gap-2">
                               {visibleSongs.map((result) => (
@@ -1072,7 +1208,7 @@ export function LyricsApp() {
                             className="mt-3 inline-flex min-h-9 items-center gap-1.5 text-xs text-muted underline-offset-4 hover:text-foreground hover:underline"
                           >
                             <ExternalLink className="size-3.5" strokeWidth={1.75} />
-                            View all results on Uta-Net
+                            {t("artist.viewAll")}
                           </a>
                         ) : null}
                       </>
@@ -1080,8 +1216,10 @@ export function LyricsApp() {
 
                     {artistResults && artistResults.length > 0 ? (
                       <div className={cn(searchResult && "mt-4 border-t border-border pt-3")}>
-                        <p className="text-xs tracking-wide text-muted">Artists</p>
-                        <p className="mt-1 text-xs text-muted">{artistResults.length} artists</p>
+                        <p className="text-xs tracking-wide text-muted">{t("artist.artists")}</p>
+                        <p className="mt-1 text-xs text-muted">
+                          {t("artist.artistsCount", { n: artistResults.length })}
+                        </p>
                         <ul className="mt-2 flex flex-col gap-2">
                           {visibleArtists.map((artist) => (
                             <li
@@ -1099,7 +1237,7 @@ export function LyricsApp() {
                                   </span>
                                   {artist.songCount != null ? (
                                     <span className="block text-xs text-muted">
-                                      {artist.songCount} songs on Uta-Net
+                                      {t("artist.songsOnUtaNet", { n: artist.songCount })}
                                     </span>
                                   ) : null}
                                 </span>
@@ -1129,7 +1267,7 @@ export function LyricsApp() {
                 }}
               >
                 <label className="sr-only" htmlFor="lyrics-url">
-                  Lyrics URL
+                  {t("search.lyricsUrl")}
                 </label>
                 <Input
                   id="lyrics-url"
@@ -1144,10 +1282,10 @@ export function LyricsApp() {
                   {loading ? (
                     <>
                       <Loader2 className="size-4 animate-spin" />
-                      Fetching
+                      {t("search.fetching")}
                     </>
                   ) : (
-                    "Fetch lyrics"
+                    t("search.fetchLyrics")
                   )}
                 </Button>
               </form>
@@ -1165,7 +1303,7 @@ export function LyricsApp() {
                 }}
                 disabled={loading}
               >
-                Try Uta-Net sample
+                {t("sample.utaNet")}
               </button>
               <button
                 type="button"
@@ -1176,12 +1314,12 @@ export function LyricsApp() {
                 }}
                 disabled={loading}
               >
-                Try Bahamut sample
+                {t("sample.bahamut")}
               </button>
             </div>
 
             <label className="flex min-h-11 items-center gap-3 text-sm text-foreground">
-              Lyrics size
+              {t("lyrics.size")}
               <input
                 type="range"
                 min={1.0}
@@ -1199,7 +1337,7 @@ export function LyricsApp() {
               type="button"
               role="switch"
               aria-checked={showFurigana}
-              onClick={() => setShowFurigana((v) => !v)}
+              onClick={handleToggleShowRuby}
               className="flex min-h-11 items-center gap-3 text-sm text-foreground"
             >
               <span
@@ -1215,23 +1353,44 @@ export function LyricsApp() {
                   )}
                 />
               </span>
-              Show ruby
+              {t("lyrics.showRuby")}
             </button>
 
-            {showFurigana ? (
-              <label className="flex min-h-11 items-center gap-2 text-sm text-foreground">
-                Katakana aid
-                <select
-                  value={rubyAssistMode}
-                  onChange={(e) => setRubyAssistMode(e.target.value as RubyAssistMode)}
-                  className="h-9 rounded-md border border-border bg-surface px-2 text-sm"
-                >
-                  <option value="furigana">Off</option>
-                  <option value="hiragana">Hiragana</option>
-                  <option value="romaji">Romaji</option>
-                </select>
-              </label>
-            ) : null}
+            <label className="flex min-h-11 items-center gap-2 text-sm text-foreground">
+              {t("lyrics.katakanaAid")}
+              <select
+                value={katakanaAid}
+                onChange={(e) => handleKatakanaAidChange(e.target.value as KatakanaAidMode)}
+                className="h-9 rounded-md border border-border bg-surface px-2 text-sm"
+              >
+                <option value="off">{t("aid.off")}</option>
+                <option value="hiragana">{t("aid.hiragana")}</option>
+                <option value="romaji">{t("aid.romaji")}</option>
+              </select>
+            </label>
+
+            <button
+              type="button"
+              role="switch"
+              aria-checked={romajiMode}
+              onClick={handleToggleRomaji}
+              className="flex min-h-11 items-center gap-3 text-sm text-foreground"
+            >
+              <span
+                className={cn(
+                  "relative inline-flex h-6 w-11 items-center rounded-full border border-border transition-colors duration-150",
+                  romajiMode ? "border-primary bg-primary" : "bg-surface-2",
+                )}
+              >
+                <span
+                  className={cn(
+                    "block size-5 rounded-full bg-foreground shadow-sm transition-transform duration-150",
+                    romajiMode ? "translate-x-[22px] bg-primary-foreground" : "translate-x-0.5",
+                  )}
+                />
+              </span>
+              {t("lyrics.romajiMode")}
+            </button>
           </div>
 
           {result ? (
@@ -1293,31 +1452,31 @@ export function LyricsApp() {
                     rel="noreferrer"
                     className="underline underline-offset-2 hover:text-foreground"
                   >
-                    在 YouTube 搜尋 karaoke 版本
+                    {t("karaoke.searchYoutube")}
                   </a>
                 </p>
               ) : null}
               {syncStatus === "loading" ? (
                 <p className="flex items-center gap-2 text-xs text-muted">
                   <Loader2 className="size-3.5 animate-spin" />
-                  Loading synced lyrics from NetEase…
+                  {t("sync.loading")}
                 </p>
               ) : syncStatus === "ok" ? (
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-border bg-surface px-3 py-2 text-xs text-muted">
                   <span className="flex items-center gap-1.5">
                     <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
-                    {stemTimings ? "Aligned word-by-word" : "Synced with NetEase timestamps"}
+                    {stemTimings ? "Aligned word-by-word" : t("sync.synced")}
                   </span>
                   <div
                     className="flex flex-wrap items-center gap-2"
                     role="group"
                     aria-label="Lyric offset"
                   >
-                    <span>Offset</span>
+                    <span>{t("sync.offset")}</span>
                     <button
                       type="button"
                       onClick={() =>
-                        setLyricOffset((v) => Math.max(-5, Math.round((v - 0.25) * 100) / 100))
+                        setLyricOffset((v) => Math.max(-15, Math.round((v - 0.25) * 100) / 100))
                       }
                       aria-label="Decrease lyric offset by 0.25 seconds"
                       className="flex size-7 items-center justify-center rounded-md border border-border text-muted transition-colors hover:text-foreground"
@@ -1326,8 +1485,8 @@ export function LyricsApp() {
                     </button>
                     <input
                       type="range"
-                      min={-5}
-                      max={5}
+                      min={-15}
+                      max={15}
                       step={0.25}
                       value={lyricOffset}
                       onChange={(e) => setLyricOffset(Number(e.target.value))}
@@ -1337,7 +1496,7 @@ export function LyricsApp() {
                     <button
                       type="button"
                       onClick={() =>
-                        setLyricOffset((v) => Math.min(5, Math.round((v + 0.25) * 100) / 100))
+                        setLyricOffset((v) => Math.min(15, Math.round((v + 0.25) * 100) / 100))
                       }
                       aria-label="Increase lyric offset by 0.25 seconds"
                       className="flex size-7 items-center justify-center rounded-md border border-border text-muted transition-colors hover:text-foreground"
@@ -1351,9 +1510,7 @@ export function LyricsApp() {
                   </div>
                 </div>
               ) : syncStatus === "none" ? (
-                <p className="text-xs text-muted">
-                  No NetEase timestamps found — showing plain lyrics.
-                </p>
+                <p className="text-xs text-muted">{t("sync.none")}</p>
               ) : null}
             </div>
           ) : null}
@@ -1370,7 +1527,7 @@ export function LyricsApp() {
           <section className="min-h-72 rounded-[28px] border border-border bg-paper px-5 py-8 sm:px-10 sm:py-12">
             {loading ? (
               <div className="space-y-5" aria-busy="true" aria-live="polite">
-                <p className="text-sm text-muted">Reading the page and adding readings…</p>
+                <p className="text-sm text-muted">{t("cta.reading")}</p>
                 {["w-5/6", "w-2/3", "w-4/5", "w-3/5", "w-3/4", "w-2/3", "w-5/6", "w-1/2"].map(
                   (width, i) => (
                     <div
@@ -1384,7 +1541,7 @@ export function LyricsApp() {
               <div className="space-y-8">
                 <div className="flex items-start justify-between gap-3 border-b border-border pb-5">
                   <div className="space-y-1">
-                    <p className="text-xs tracking-wide text-muted">Japanese only</p>
+                    <p className="text-xs tracking-wide text-muted">{t("lyrics.fileLabel")}</p>
                     <h2 className="font-serif text-lg leading-snug text-pretty text-foreground">
                       {result.title}
                     </h2>
@@ -1394,8 +1551,8 @@ export function LyricsApp() {
                     aria-pressed={favorites.isFavorite(result.sourceUrl)}
                     aria-label={
                       favorites.isFavorite(result.sourceUrl)
-                        ? `Remove ${result.title} from favorites`
-                        : `Add ${result.title} to favorites`
+                        ? t("song.unfavAria", { title: result.title })
+                        : t("song.favAria", { title: result.title })
                     }
                     onClick={() =>
                       favorites.toggle({ sourceUrl: result.sourceUrl, title: result.title })
@@ -1426,17 +1583,15 @@ export function LyricsApp() {
                       : undefined
                   }
                   showFurigana={showFurigana}
-                  rubyAssistMode={rubyAssistMode}
+                  katakanaAid={katakanaAid}
+                  romaji={romajiMode}
                   fontSizeRem={fontSizeRem}
                 />
               </div>
             ) : (
               <div className="flex min-h-56 flex-col items-center justify-center gap-3 text-center">
                 <Music2 className="size-8 text-subtle" strokeWidth={1.5} />
-                <p className="max-w-sm text-sm leading-relaxed text-muted">
-                  Lyrics will appear here with furigana over kanji and optional katakana aid in
-                  hiragana or romaji.
-                </p>
+                <p className="max-w-sm text-sm leading-relaxed text-muted">{t("lyrics.empty")}</p>
               </div>
             )}
           </section>
