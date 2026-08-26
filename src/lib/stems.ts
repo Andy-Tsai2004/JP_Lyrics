@@ -192,3 +192,23 @@ export async function fetchStemTimings(songId: string): Promise<StemTimings | nu
     return null;
   }
 }
+
+/**
+ * True when the host-computed timings were produced for exactly these lyric
+ * lines (texts and character counts). Used to detect stale caches computed
+ * for a different lyric source (e.g. before NetEase timed lyrics arrived).
+ */
+export function timingsMatchSource(
+  timings: StemTimings,
+  lines: string[],
+): boolean {
+  const tl = timings.lines;
+  if (tl.length !== lines.length) return false;
+  for (let i = 0; i < lines.length; i++) {
+    const t = tl[i];
+    if (!t || t.text !== lines[i] || t.char_times.length !== lines[i].length) {
+      return false;
+    }
+  }
+  return true;
+}

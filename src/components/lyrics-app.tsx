@@ -57,6 +57,7 @@ import {
   getStemStatus,
   isStemsServiceAvailable,
   requestStem,
+  timingsMatchSource,
   utaNetSongId,
   type StemInfo,
   type StemTimings,
@@ -297,6 +298,8 @@ export function LyricsApp() {
   const lyricLinesRef = useRef<string[]>([]);
   // NetEase line-start anchors for the host's alignment (empty when absent).
   const lyricStartsRef = useRef<number[]>([]);
+  // Key of the lyric source we already asked the host to re-align.
+  const realignKeyRef = useRef("");
 
   const resultSource = result?.sourceUrl ?? null;
   const resultTitle = result?.title ?? "";
@@ -339,7 +342,34 @@ export function LyricsApp() {
         setStems(st);
         if (lines.length > 0 && st.timings === "ready") {
           const timings = await fetchStemTimings(id);
-          if (reqId === stemRequestRef.current && timings) setStemTimings(timings);
+          if (reqId !== stemRequestRef.current) return;
+          const realignKey = `${id}\u0001${lines.join("\u0001")}`;
+          if (
+            timings &&
+            !timingsMatchSource(timings, lines) &&
+            realignKeyRef.current !== realignKey
+          ) {
+            // Cached word timings were computed for a different lyric source
+            // (e.g. NetEase timed lyrics arrived later) — re-align on host.
+            realignKeyRef.current = realignKey;
+            const st2 = await requestStem(sourceUrl, lines, starts);
+            if (reqId !== stemRequestRef.current) return;
+            if (st2?.state === "ready") {
+              setStems(st2);
+              if (st2.timings === "pending") {
+                setTimeout(() => {
+                  if (reqId === stemRequestRef.current) void pollStem(sourceUrl, false);
+                }, 4000);
+              } else if (st2.timings === "ready") {
+                const timings2 = await fetchStemTimings(id);
+                if (reqId === stemRequestRef.current && timings2) setStemTimings(timings2);
+              }
+            } else {
+              setStems(st2);
+            }
+            return;
+          }
+          if (timings) setStemTimings(timings);
           return;
         }
         if (lines.length > 0 && st.timings === "pending") {

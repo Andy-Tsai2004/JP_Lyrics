@@ -255,7 +255,21 @@ def maybe_schedule_align(song_id: str) -> None:
         job = jobs.get(song_id)
         if not job or not job.lines:
             return
-        if timings_path(song_id).exists():
+        tp = timings_path(song_id)
+        if tp.exists():
+            try:
+                cached = json.loads(tp.read_text(encoding="utf-8")).get("lines", [])
+                stale = [ln.get("text") for ln in cached] != job.lines
+            except Exception:
+                stale = True
+            if stale:
+                # Cached timings were computed for different lyric lines
+                # (e.g. NetEase timed lyrics arrived after an earlier
+                # alignment); drop them so the job re-aligns below.
+                tp.unlink(missing_ok=True)
+                job.timings_state = "pending"
+                executor.submit(_align_job, song_id)
+                return
             job.timings_state = "ready"
             return
         if job.timings_state == "pending":
