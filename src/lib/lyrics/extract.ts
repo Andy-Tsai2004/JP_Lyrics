@@ -110,6 +110,20 @@ export function extractUtaNetLyrics(html: string): { title: string; lines: strin
 const MARKDOWN_HR = /^\s*(?:\* \* \*|\*\*\*|---)\s*$/m;
 
 function utaNetMarkdownTitle(markdown: string): string {
+  // r.jina.ai's page header, e.g.
+  //   Title: 「シャナ/Guiano」の歌詞 って「イイネ！」
+  // Prefer it over page headings — the heading layout varies by page and can
+  // be the site logo instead of the song title.
+  const titleLine = markdown.match(/^Title:\s*(.+)$/m)?.[1]?.trim();
+  if (titleLine) {
+    const quoted = titleLine.match(/「([^」]+)」/);
+    if (quoted) {
+      const [song, artist] = quoted[1].split("/").map((part) => part.trim());
+      if (song) return artist ? `${song} - ${artist}` : song;
+    }
+    const cut = titleLine.replace(/\s*歌詞.*$/, "").trim();
+    if (cut) return cut;
+  }
   const song = markdown.match(/^##\s+(.+)$/m)?.[1]?.trim();
   const artist = markdown.match(/^###\s+\[([^\]]+)\]\(/m)?.[1]?.trim();
   if (song && artist) return `${song} - ${artist}`;
