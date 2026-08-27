@@ -10,8 +10,9 @@
 #   .\run-tunnel.ps1 -StopOnly     # stop a previously started service + tunnel
 #
 # It prints the public https://<random>.trycloudflare.com URL. Visitors of
-# https://luszechai.github.io/JP_Lyrics/ can then generate off-vocal while
-# this PC stays on and the tunnel is up. The URL changes on EVERY run, so
+# https://luszechai.github.io/JP_Lyrics/ or https://Andy-Tsai2004.github.io/JP_Lyrics/
+# can then generate off-vocal while this PC stays on and the tunnel is up.
+# The URL changes on EVERY run, so
 # re-run this script after a restart - it updates public/stems-config.json and
 # pushes it, and the site picks the new URL up at runtime (no rebuild).
 #
@@ -152,7 +153,7 @@ if (-not $LocalOnly) {
 $serviceLog = Join-Path $ServiceDir '.stems-service.log'
 $serviceErr = Join-Path $ServiceDir '.stems-service.err.log'
 if (-not $env:STEMS_CACHE_DIR) { $env:STEMS_CACHE_DIR = Join-Path $ServiceDir 'stems_cache' }
-if (-not $env:STEMS_CORS_ORIGINS) { $env:STEMS_CORS_ORIGINS = 'https://luszechai.github.io,http://localhost:8080' }
+if (-not $env:STEMS_CORS_ORIGINS) { $env:STEMS_CORS_ORIGINS = 'https://luszechai.github.io,https://Andy-Tsai2004.github.io,http://localhost:8080' }
 if (-not $env:STEMS_DEVICE) { $env:STEMS_DEVICE = 'cpu' }
 
 Write-Step "Starting stem service ($python) on port $Port..."
@@ -219,7 +220,7 @@ if (-not $LocalOnly) {
   Write-Host ''
   Write-Host '==============================================================' -ForegroundColor Green
   Write-Host "  PUBLIC URL:  $url" -ForegroundColor Green
-  Write-Host '  Anyone on https://luszechai.github.io/JP_Lyrics/ can now use' -ForegroundColor Green
+  Write-Host '  Anyone on https://luszechai.github.io/JP_Lyrics/ or https://Andy-Tsai2004.github.io/JP_Lyrics/ can now use' -ForegroundColor Green
   Write-Host '  the automated off-vocal karaoke while this PC stays on.' -ForegroundColor Green
   Write-Host '  (First request per song takes ~1-2 min to generate, then cached.)' -ForegroundColor Green
   Write-Host '==============================================================' -ForegroundColor Green

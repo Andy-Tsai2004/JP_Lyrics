@@ -22,7 +22,7 @@ handles the volume + restart policy + healthcheck:
 ```bash
 cd stems-service
 # set your origins in a .env next to this file (optional):
-#   STEMS_CORS_ORIGINS=https://luszechai.github.io
+#   STEMS_CORS_ORIGINS=https://luszechai.github.io,https://Andy-Tsai2004.github.io
 docker compose up -d --build
 ```
 
@@ -111,7 +111,7 @@ docker run -d --name jplyrics-stems \
   -v /srv/jplyrics-stems-cache:/data \
   -e STEMS_CACHE_DIR=/data \
   -e STEMS_DEVICE=cpu \
-  -e STEMS_CORS_ORIGINS=https://luszechai.github.io,https://localhost:8080 \
+  -e STEMS_CORS_ORIGINS=https://luszechai.github.io,https://Andy-Tsai2004.github.io,https://localhost:8080 \
   jplyrics-stems
 ```
 

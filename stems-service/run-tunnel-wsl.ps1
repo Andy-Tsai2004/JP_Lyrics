@@ -89,7 +89,7 @@ $url = (Get-Content $urlFile | Select-Object -First 1).Trim()
 Write-Host ''
 Write-Host '==============================================================' -ForegroundColor Green
 Write-Host "  PUBLIC URL:  $url" -ForegroundColor Green
-Write-Host '  Anyone on https://luszechai.github.io/JP_Lyrics/ can now use' -ForegroundColor Green
+Write-Host '  Anyone on https://luszechai.github.io/JP_Lyrics/ or https://Andy-Tsai2004.github.io/JP_Lyrics/ can now use' -ForegroundColor Green
 Write-Host '  the automated off-vocal karaoke while this PC stays on.' -ForegroundColor Green
 Write-Host '  (First request per song takes ~1-2 min to generate, then cached.)' -ForegroundColor Green
 Write-Host '==============================================================' -ForegroundColor Green
