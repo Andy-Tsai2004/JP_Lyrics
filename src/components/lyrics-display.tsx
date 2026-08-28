@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef } from "react";
 import {
   containsKatakana,
@@ -72,6 +72,7 @@ function romajiOfLine(line: LyricLine): string {
 export function LyricsDisplay({
   lines,
   activeIndex,
+  activeTime,
   onLineClick,
   showFurigana,
   katakanaAid,
@@ -81,6 +82,8 @@ export function LyricsDisplay({
   lines: LyricLine[];
   /** When provided, the line at this index is highlighted and auto-scrolled. */
   activeIndex?: number;
+  /** Playback position (seconds) used to highlight words within the active line. */
+  activeTime?: number;
   /** When provided, clicking a line calls back with its index (seek target). */
   onLineClick?: (index: number) => void;
   showFurigana: boolean;
@@ -116,54 +119,108 @@ export function LyricsDisplay({
               {romajiOfLine(line)}
             </div>
           ) : null}
-          <p
-            aria-current={syncing && i === activeIndex ? "true" : undefined}
-            role={onLineClick ? "button" : undefined}
-            tabIndex={onLineClick ? 0 : undefined}
-            onClick={onLineClick ? () => onLineClick(i) : undefined}
-            onKeyDown={
-              onLineClick
-                ? (event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      onLineClick(i);
-                    }
-                  }
-                : undefined
-            }
-            className={cn(
-              "font-serif text-foreground transition-colors duration-300",
-              (showFurigana || katakanaAid !== "off") && "pt-1",
-              syncing && (i === activeIndex ? "font-medium text-foreground" : "text-subtle"),
-              onLineClick &&
-                "cursor-pointer outline-none hover:text-foreground focus-visible:text-foreground",
-            )}
-            style={{
-              fontSize: `${fontSizeRem}rem`,
-              lineHeight: showFurigana || katakanaAid !== "off" ? 1.74 : 1.62,
-            }}
-          >
-            {romaji
-              ? line.text
-              : !showFurigana && katakanaAid === "off"
-                ? line.text
-                : line.tokens.map((token, j) => {
-                    if (token.furigana && showFurigana) {
-                      return (
-                        <ruby key={j} className="ruby-token">
-                          {token.text}
-                          <rt>{token.furigana}</rt>
-                        </ruby>
-                      );
-                    }
-                    if (katakanaAid !== "off" && containsKatakana(token.text)) {
-                      return <span key={j}>{renderTokenWithAssist(token.text, katakanaAid)}</span>;
-                    }
-                    return <span key={j}>{token.text}</span>;
-                  })}
-          </p>
+          <WordLine
+            line={line}
+            syncing={syncing}
+            isActiveLine={syncing && i === activeIndex}
+            activeTime={activeTime}
+            onLineClick={onLineClick ? () => onLineClick(i) : undefined}
+            showFurigana={showFurigana}
+            katakanaAid={katakanaAid}
+            romaji={romaji}
+            fontSizeRem={fontSizeRem}
+          />
         </div>
       ))}
     </div>
+  );
+}
+
+function WordLine({
+  line,
+  syncing,
+  isActiveLine,
+  activeTime,
+  onLineClick,
+  showFurigana,
+  katakanaAid,
+  romaji,
+  fontSizeRem,
+}: {
+  line: LyricLine;
+  syncing: boolean;
+  isActiveLine: boolean;
+  activeTime?: number;
+  onLineClick?: () => void;
+  showFurigana: boolean;
+  katakanaAid: KatakanaAidMode;
+  romaji: boolean;
+  fontSizeRem: number;
+}) {
+  const canFill =
+    isActiveLine &&
+    line.start != null &&
+    line.end != null &&
+    line.end > line.start;
+  const progress =
+    canFill && activeTime != null
+      ? Math.max(0, Math.min(1, (activeTime - line.start!) / (line.end! - line.start!)))
+      : 0;
+  return (
+    <p
+      aria-current={isActiveLine ? "true" : undefined}
+      role={onLineClick ? "button" : undefined}
+      tabIndex={onLineClick ? 0 : undefined}
+      onClick={onLineClick}
+      onKeyDown={
+        onLineClick
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onLineClick();
+              }
+            }
+          : undefined
+      }
+      className={cn(
+        "font-serif text-foreground transition-colors duration-300",
+        (showFurigana || katakanaAid !== "off") && "pt-1",
+        syncing && (isActiveLine ? "font-medium text-foreground" : "text-subtle"),
+        onLineClick &&
+          "cursor-pointer outline-none hover:text-foreground focus-visible:text-foreground",
+      )}
+      style={{
+        fontSize: `${fontSizeRem}rem`,
+        lineHeight: showFurigana || katakanaAid !== "off" ? 1.74 : 1.62,
+      }}
+    >
+      <span
+        className={cn(canFill && "karaoke-fill")}
+        style={
+          canFill
+            ? ({ "--karaoke-progress": `${progress * 100}%` } as CSSProperties)
+            : undefined
+        }
+      >
+        {romaji
+          ? line.text
+          : !showFurigana && katakanaAid === "off"
+            ? line.text
+            : line.tokens.map((token, j) => {
+                if (token.furigana && showFurigana) {
+                  return (
+                    <ruby key={j} className="ruby-token">
+                      {token.text}
+                      <rt>{token.furigana}</rt>
+                    </ruby>
+                  );
+                }
+                if (katakanaAid !== "off" && containsKatakana(token.text)) {
+                  return <span key={j}>{renderTokenWithAssist(token.text, katakanaAid)}</span>;
+                }
+                return <span key={j}>{token.text}</span>;
+              })}
+      </span>
+    </p>
   );
 }

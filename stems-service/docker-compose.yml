@@ -1,0 +1,28 @@
+services:
+  jplyrics-stems:
+    build: .
+    image: jplyrics-stems
+    container_name: jplyrics-stems
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist generated stems across restarts so the second request is instant.
+      - jplyrics-stems-data:/data
+    environment:
+      STEMS_CACHE_DIR: /data
+      STEMS_DEVICE: ${STEMS_DEVICE:-cpu}
+      STEMS_WORKERS: ${STEMS_WORKERS:-1}
+      # Comma-separated allowed origins. Set these from a `.env` file next to
+      # this compose file. Use your real site origin(s), NOT * , so only your site
+      # can trigger generation.
+      STEMS_CORS_ORIGINS: ${STEMS_CORS_ORIGINS:-https://luszechai.github.io,https://Andy-Tsai2004.github.io}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  jplyrics-stems-data:

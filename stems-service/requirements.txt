@@ -1,0 +1,13 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+# Demucs pulls in torch (CPU wheels ~2 GB; use a GPU image if you have a GPU).
+demucs==4.0.1
+torchcodec>=0.16
+soundfile>=0.12
+# Keep yt-dlp current: YouTube frequently breaks old versions (HTTP 400 /
+# "Precondition check failed"), so an old pin makes generation fail.
+yt-dlp>=2026.8.19
+numpy>=1.26
+# Word-level lyric alignment (Whisper transcription + DP alignment).
+faster-whisper>=1.2.0

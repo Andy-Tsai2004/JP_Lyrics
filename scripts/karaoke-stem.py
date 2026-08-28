@@ -37,7 +37,6 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -203,9 +202,15 @@ def youtube_id_from_url(url: str) -> str:
 def download_youtube_audio(video_url: str, out_dir: Path) -> Path:
     """Download best-audio of a YouTube video and extract it to m4a (needs ffmpeg)."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    ytdlp = shutil.which("yt-dlp") or "uvx --from yt-dlp yt-dlp"
-    out_pattern = "song.%(ext)s"
-    cmd = shlex.split(ytdlp) + [
+    ytdlp = shutil.which("yt-dlp")
+    if ytdlp:
+        # On Windows shutil.which returns a backslash path; NEVER shlex.split it
+        # (shlex treats backslashes as escapes and mangles C:\\Users\\...).
+        prefix = [ytdlp]
+    else:
+        uvx = shutil.which("uvx") or "uvx"
+        prefix = [uvx, "--from", "yt-dlp", "yt-dlp"]
+    cmd = prefix + [
         "--no-playlist",
         "-f",
         "bestaudio/best",

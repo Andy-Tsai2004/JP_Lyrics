@@ -30,6 +30,11 @@ jobs:
 
       - run: npm ci
 
+      # The off-vocal stem service base URL is NOT baked in at build time: the
+      # site reads `public/stems-config.json` at runtime. The PC-hosted
+      # Cloudflare quick tunnel gets a new URL every run, so
+      # `stems-service/run-tunnel.ps1` updates that file and pushes it whenever
+      # the tunnel restarts - no rebuild is needed for a URL change.
       - name: Build for GitHub Pages
         run: npm run build:pages
 

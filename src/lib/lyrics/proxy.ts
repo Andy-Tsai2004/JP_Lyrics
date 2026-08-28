@@ -42,7 +42,25 @@ export async function fetchRawHtml(url: URL): Promise<string | null> {
     );
     if (res.ok) {
       const text = await res.text();
-      if (text && !text.trim().startsWith("{")) return text;
+      if (text && !text.trim().startsWith("{")) {
+        if (text.includes("cached snapshot")) {
+          // Stale/broken jina snapshot — retry once bypassing its cache.
+          try {
+            const retry = await fetchWithTimeout(
+              `https://r.jina.ai/${url.toString()}`,
+              { headers: { "X-Return-Format": "html", "X-No-Cache": "true" } },
+              MARKDOWN_TIMEOUT_MS,
+            );
+            if (retry.ok) {
+              const fresh = await retry.text();
+              if (fresh && !fresh.trim().startsWith("{")) return fresh;
+            }
+          } catch {
+            // keep the first response below
+          }
+        }
+        return text;
+      }
     }
   } catch {
     // transient failure — fall through to the raw-HTML proxies
@@ -66,10 +84,36 @@ export async function fetchMarkdown(url: URL): Promise<string | null> {
     const res = await fetchWithTimeout(`https://r.jina.ai/${url.toString()}`);
     if (res.ok) {
       const text = await res.text();
-      if (text.includes("Markdown Content:")) return text;
+      if (text.includes("Markdown Content:")) {
+        return await retryWithoutJinaCache(url, text);
+      }
     }
   } catch {
     // transient network failure — the HTML fallback will run
   }
   return null;
+}
+
+/**
+ * r.jina.ai sometimes serves a stale or broken snapshot (its warning says
+ * "cached snapshot … consider retry with caching opt-out"). When detected,
+ * fetch the page once more with `X-No-Cache: true`; fall back to the original
+ * response if the retry fails.
+ */
+async function retryWithoutJinaCache(url: URL, original: string): Promise<string> {
+  if (!original.includes("cached snapshot")) return original;
+  try {
+    const res = await fetchWithTimeout(
+      `https://r.jina.ai/${url.toString()}`,
+      { headers: { "X-No-Cache": "true" } },
+      MARKDOWN_TIMEOUT_MS,
+    );
+    if (res.ok) {
+      const text = await res.text();
+      if (text.includes("Markdown Content:")) return text;
+    }
+  } catch {
+    // transient — keep the first response below
+  }
+  return original;
 }

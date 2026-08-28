@@ -11,7 +11,8 @@ import { fetchWithTimeout } from "./proxy.ts";
 export type { NeteaseSong, TimedLyricLine } from "./lrc.ts";
 
 const NETEASE_TIMEOUT_MS = 15_000;
-const CACHE_PREFIX = "jplyrics:netease:v2:";
+// v3: word-level timestamps were added; bump so stale v2 caches re-fetch.
+const CACHE_PREFIX = "jplyrics:netease:v3:";
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // keep synced lyrics for a week
 
 type CacheEntry = {
@@ -146,14 +147,7 @@ export async function fetchTimedLyrics(title: string): Promise<TimedLyricLine[]>
       if (lrc) {
         const parsed = parseLrc(lrc);
         if (parsed.length > 0) {
-          const withRuby = await addFurigana(parsed.map((line) => line.text)).catch(
-            () => parsed.map((line) => ({ text: line.text, tokens: [{ text: line.text }] })),
-          );
-          lines = parsed.map((line, index) => ({
-            ...withRuby[index],
-            start: line.start,
-            end: line.end,
-          }));
+          lines = await withFurigana(parsed);
         }
       }
     }
@@ -162,4 +156,33 @@ export async function fetchTimedLyrics(title: string): Promise<TimedLyricLine[]>
   }
   writeCache(key, lines);
   return lines;
+}
+
+/** Add ruby readings, preserving NetEase word-level timestamps when present. */
+async function withFurigana(parsed: TimedLyricLine[]): Promise<TimedLyricLine[]> {
+  const hasWordTimes = parsed.some((line) =>
+    line.tokens.some((token) => token.start != null),
+  );
+  if (!hasWordTimes) {
+    const withRuby = await addFurigana(parsed.map((line) => line.text)).catch(
+      () => parsed.map((line) => ({ text: line.text, tokens: [{ text: line.text }] })),
+    );
+    return parsed.map((line, index) => ({
+      ...withRuby[index],
+      start: line.start,
+      end: line.end,
+    }));
+  }
+  // Word-level lyrics: annotate each timed word and carry its start/end onto
+  // the furigana sub-tokens so playback can highlight word by word.
+  const words = parsed.flatMap((line) => line.tokens.map((token) => token.text));
+  const ruby = await addFurigana(words).catch(() => null);
+  let wordIndex = 0;
+  return parsed.map((line) => ({
+    ...line,
+    tokens: line.tokens.flatMap((token) => {
+      const sub = ruby?.[wordIndex++]?.tokens ?? [{ text: token.text }];
+      return sub.map((piece) => ({ ...piece, start: token.start, end: token.end }));
+    }),
+  }));
 }

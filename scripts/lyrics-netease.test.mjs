@@ -44,6 +44,34 @@ test("parseLrc sorts out-of-order lines by start time", () => {
   );
 });
 
+test("parseLrc extracts NetEase word-level timestamps", () => {
+  const lines = parseLrc(
+    "[00:12.340]<00:12.340>言葉<00:13.110>に<00:13.440>できない",
+  );
+  assert.equal(lines.length, 1);
+  // The inline tags are stripped from the display text.
+  assert.equal(lines[0].text, "言葉にできない");
+  assert.deepEqual(
+    lines[0].tokens.map((t) => ({ text: t.text, start: t.start, end: t.end })),
+    [
+      { text: "言葉", start: 12.34, end: 13.11 },
+      { text: "に", start: 13.11, end: 13.44 },
+      { text: "できない", start: 13.44, end: lines[0].end },
+    ],
+  );
+  assert.equal(lines[0].start, 12.34);
+});
+
+test("parseLrc keeps plain lines untimed while preserving word lines in one doc", () => {
+  const lines = parseLrc(
+    "[00:00.500]<00:00.500>夜<00:00.900>に\n[00:05.000]沈むように",
+  );
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].tokens[0].start, 0.5);
+  assert.equal(lines[1].tokens[0].start, undefined);
+  assert.equal(lines[1].text, "沈むように");
+});
+
 test("pickNeteaseSong prefers the exact title + artist match", () => {
   const songs = [
     { id: 1, name: "夜に駆ける", artist: "ALKALOID" },

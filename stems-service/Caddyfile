@@ -1,0 +1,16 @@
+# HTTPS front for the stem generator. Run Caddy on the same host as the
+# container. Caddy auto-issues a Let's Encrypt certificate for the domain.
+#
+# Steps:
+#   1. Replace stems.your-host.example with a domain you own.
+#   2. Point an A record (stems.your-host.example -> this server's public IP).
+#   3. Run: caddy run --config /etc/caddy/Caddyfile   (or put this in a
+#      docker-compose caddy service on the same network).
+#
+# The container publishes 127.0.0.1:8000 (its own port 8000), so Caddy proxies
+# to localhost:8000. HTTPS is REQUIRED: the github.io site is https, and a
+# browser refuses to call an http backend (mixed content).
+
+stems.your-host.example {
+	reverse_proxy 127.0.0.1:8000
+}

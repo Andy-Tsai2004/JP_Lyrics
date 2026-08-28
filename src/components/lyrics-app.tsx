@@ -13,7 +13,7 @@ import {
   Music2,
   Plus,
   Search,
-  X,
+  Sparkles,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KatakanaAidMode } from "@/components/lyrics-display";
@@ -30,7 +30,6 @@ import { fetchTimedLyrics } from "@/lib/lyrics/netease";
 import type { TimedLyricLine } from "@/lib/lyrics/netease";
 import { splitTitle } from "@/lib/lyrics/lrc";
 import {
-  karaokeConfidence,
   searchKaraokeCandidates,
   type KaraokeCandidate,
   youtubeSearchUrl,
@@ -53,30 +52,21 @@ import {
 } from "@/lib/lyrics/search";
 import type { LyricsResult } from "@/lib/lyrics/types";
 import { cn } from "@/lib/utils";
+import {
+  fetchStemTimings,
+  getStemStatus,
+  isStemsServiceAvailable,
+  requestStem,
+  timingsMatchSource,
+  utaNetSongId,
+  type StemInfo,
+  type StemTimings,
+} from "@/lib/stems";
 import { useI18n, localeName, LOCALES, type Locale } from "@/lib/i18n";
 
 const BAHAMUT_SAMPLE_URL = "https://home.gamer.com.tw/artwork.php?sn=6306141";
 const UTANET_SAMPLE_URL = "https://www.uta-net.com/song/397348/";
 const PAGE_SIZE = 10;
-
-const KARAOKE_KIND_LABEL: Record<KaraokeCandidate["kind"], string> = {
-  karaoke: "カラオケ",
-  "off-vocal": "オフボーカル",
-  instrumental: "インスト",
-  backing: "伴奏",
-  piano: "ピアノ",
-};
-
-/** Format a duration in seconds as "m:ss" (or "h:mm:ss" for >= 1 hour). */
-function formatDuration(seconds?: number): string | null {
-  if (!seconds || seconds <= 0 || !Number.isFinite(seconds)) return null;
-  const total = Math.round(seconds);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
 
 function pageWindow(page: number, total: number): Array<number | "…"> {
   if (total <= 7) {
@@ -258,6 +248,9 @@ export function LyricsApp() {
   const [songPage, setSongPage] = useState(1);
   const [artistPage, setArtistPage] = useState(1);
   const [artistResults, setArtistResults] = useState<UtaNetArtistResult[] | null>(null);
+  // After opening a song, the result list collapses into a dropdown; a new
+  // search re-expands it.
+  const [resultsCollapsed, setResultsCollapsed] = useState(false);
   const [artistSongs, setArtistSongs] = useState<{
     artistUrl: string;
     artist: string;
@@ -293,9 +286,156 @@ export function LyricsApp() {
   const history = useSongHistory();
   const favorites = useSongFavorites();
   const [libraryView, setLibraryView] = useState<LibraryView | null>(null);
+  // Auto-detected off-vocal stem (from the generator service) for the loaded song.
+  const [stems, setStems] = useState<StemInfo | null>(null);
+  // Word-level timings computed by the host (null = none yet).
+  const [stemTimings, setStemTimings] = useState<StemTimings | null>(null);
+  // Whether a stem service is configured (null = still checking).
+  const [stemsAvailable, setStemsAvailable] = useState<boolean | null>(null);
+  // Incremented on song change / re-trigger to invalidate in-flight polls.
+  const stemRequestRef = useRef(0);
+  // The lyric lines shown to the user (what the host aligns timestamps to).
+  const lyricLinesRef = useRef<string[]>([]);
+  // NetEase line-start anchors for the host's alignment (empty when absent).
+  const lyricStartsRef = useRef<number[]>([]);
+  // Key of the lyric source we already asked the host to re-align.
+  const realignKeyRef = useRef("");
 
   const resultSource = result?.sourceUrl ?? null;
   const resultTitle = result?.title ?? "";
+
+  useEffect(() => {
+    const useTimed = timedLines && timedLines.length > 0;
+    lyricLinesRef.current = (useTimed ? timedLines : (result?.lines ?? [])).map(
+      (line) => line.text,
+    );
+    lyricStartsRef.current = useTimed
+      ? timedLines.map((line) => line.start)
+      : [];
+  }, [timedLines, result?.lines]);
+
+  /** Check stem status; when `trigger`, POST to start generation if unknown. */
+  const pollStem = useCallback(
+    async (sourceUrl: string, trigger: boolean) => {
+      const id = utaNetSongId(sourceUrl);
+      if (!id) return;
+      const reqId = ++stemRequestRef.current;
+      const lines = lyricLinesRef.current;
+      const starts = lyricStartsRef.current;
+      let st = await getStemStatus(id);
+      if (trigger && st?.state === "unknown") st = await requestStem(sourceUrl);
+      if (reqId !== stemRequestRef.current) return; // song changed / re-triggered
+      // Auto-align: once the audio exists, ask the host to compute word
+      // timestamps (skip when already aligned / aligning / failed).
+      if (
+        lines.length > 0 &&
+        st &&
+        (st.state === "ready" || st.state === "generating") &&
+        st.timings !== "ready" &&
+        st.timings !== "pending" &&
+        st.timings !== "error"
+      ) {
+        st = await requestStem(sourceUrl, lines, starts);
+      }
+      if (reqId !== stemRequestRef.current) return;
+      if (st?.state === "ready") {
+        setStems(st);
+        if (lines.length > 0 && st.timings === "ready") {
+          const timings = await fetchStemTimings(id);
+          if (reqId !== stemRequestRef.current) return;
+          const realignKey = `${id}\u0001${lines.join("\u0001")}`;
+          if (
+            timings &&
+            !timingsMatchSource(timings, lines) &&
+            realignKeyRef.current !== realignKey
+          ) {
+            // Cached word timings were computed for a different lyric source
+            // (e.g. NetEase timed lyrics arrived later) — re-align on host.
+            realignKeyRef.current = realignKey;
+            const st2 = await requestStem(sourceUrl, lines, starts);
+            if (reqId !== stemRequestRef.current) return;
+            if (st2?.state === "ready") {
+              setStems(st2);
+              if (st2.timings === "pending") {
+                setTimeout(() => {
+                  if (reqId === stemRequestRef.current) void pollStem(sourceUrl, false);
+                }, 4000);
+              } else if (st2.timings === "ready") {
+                const timings2 = await fetchStemTimings(id);
+                if (reqId === stemRequestRef.current && timings2) setStemTimings(timings2);
+              }
+            } else {
+              setStems(st2);
+            }
+            return;
+          }
+          if (timings) setStemTimings(timings);
+          return;
+        }
+        if (lines.length > 0 && st.timings === "pending") {
+          setTimeout(() => {
+            if (reqId === stemRequestRef.current) void pollStem(sourceUrl, false);
+          }, 4000);
+        }
+        return;
+      }
+      if (st?.state === "generating") {
+        setStems({ state: "generating" });
+        setTimeout(() => {
+          if (reqId === stemRequestRef.current) void pollStem(sourceUrl, false);
+        }, 4000);
+        return;
+      }
+      setStems(null);
+    },
+    [],
+  );
+
+  /** Manually start word-timestamp alignment for the current song. */
+  const startAlignment = useCallback(() => {
+    const sourceUrl = result?.sourceUrl ?? "";
+    const id = utaNetSongId(sourceUrl);
+    if (!id) return;
+    const reqId = ++stemRequestRef.current;
+    void (async () => {
+      const st = await requestStem(
+        sourceUrl,
+        lyricLinesRef.current,
+        lyricStartsRef.current,
+      );
+      if (reqId !== stemRequestRef.current) return;
+      if (st?.state === "ready") {
+        setStems(st);
+        setTimeout(() => {
+          if (reqId === stemRequestRef.current) void pollStem(sourceUrl, false);
+        }, 4000);
+      }
+    })();
+  }, [result?.sourceUrl, pollStem]);
+
+  useEffect(() => {
+    setStemsAvailable(null);
+    let cancelled = false;
+    void isStemsServiceAvailable().then((ok) => {
+      if (!cancelled) setStemsAvailable(ok);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [result?.sourceUrl]);
+
+  // Check whether an off-vocal already exists / is already generating (e.g.
+  // another tab started it). Generation itself only starts on user click.
+  useEffect(() => {
+    setStems(null);
+    setStemTimings(null);
+    const sourceUrl = result?.sourceUrl ?? "";
+    if (!sourceUrl || !utaNetSongId(sourceUrl)) return;
+    void pollStem(sourceUrl, false);
+    return () => {
+      stemRequestRef.current++; // invalidate any in-flight poll for the old song
+    };
+  }, [result?.sourceUrl, pollStem]);
 
   const setIme = useCallback((next: boolean) => {
     imeEnabledRef.current = next;
@@ -560,14 +700,23 @@ export function LyricsApp() {
   }
 
   function openSearchResult(result: UtaNetSearchResult) {
+    setResultsCollapsed(true);
+    setArtistSongs(null);
     setUrl(result.songUrl);
     void runFetch(result.songUrl);
   }
 
   function openRecord(record: { sourceUrl: string }) {
+    setResultsCollapsed(true);
+    setArtistSongs(null);
     setUrl(record.sourceUrl);
     void runFetch(record.sourceUrl);
   }
+
+  // A brand-new search always shows the fresh results.
+  useEffect(() => {
+    if (searchResult || artistResults) setResultsCollapsed(false);
+  }, [searchResult, artistResults]);
 
   // When a Uta-Net song loads, try to resolve synced lyrics (LRC) from
   // NetEase. Fallback is the plain Uta-Net text already fetched above.
@@ -629,41 +778,84 @@ export function LyricsApp() {
 
   function backToVocals() {
     setKaraoke(false);
-    setChosenKaraoke(null);
+    // Keep the chosen version so the toggle can switch back seamlessly.
     setShowKaraokePicker(false);
     setKaraokeError(null);
     songPlayerRef.current?.play("vocal");
   }
 
+  function backToKaraoke() {
+    if (!chosenKaraoke) return;
+    setKaraoke(true);
+    setShowKaraokePicker(false);
+    setKaraokeError(null);
+    songPlayerRef.current?.playKaraokeVideo(chosenKaraoke.videoId);
+  }
+
+  // Merge the host-computed word timings into the synced lyric lines: token
+  // times drive word-by-word highlighting, and the line start/end become the
+  // Whisper-aligned ones — so line sync follows the actual audio (the manual
+  // NetEase offset is no longer needed for aligned songs). When NetEase has no
+  // timestamps, the Whisper-generated ones are used directly.
+  const syncLines = useMemo(() => {
+    if (!stemTimings) {
+      return timedLines && timedLines.length > 0 ? timedLines : null;
+    }
+    const byIndex = new Map(stemTimings.lines.map((line) => [line.index, line]));
+    if (byIndex.size === 0) {
+      return timedLines && timedLines.length > 0 ? timedLines : null;
+    }
+    const source = timedLines && timedLines.length > 0 ? timedLines : (result?.lines ?? []);
+    if (source.length === 0) return null;
+    const merged: TimedLyricLine[] = [];
+    for (let i = 0; i < source.length; i++) {
+      const line = source[i];
+      const t = byIndex.get(i);
+      if (!t || t.text !== line.text || t.char_times.length !== line.text.length) {
+        return timedLines && timedLines.length > 0 ? timedLines : null;
+      }
+      let offset = 0;
+      const tokens = line.tokens.map((token) => {
+        const len = token.text.length;
+        const start = t.char_times[offset] ?? t.start;
+        const end = t.char_times[offset + Math.max(len - 1, 0)] ?? t.end;
+        offset += len;
+        return { ...token, start, end };
+      });
+      merged.push({ ...line, tokens, start: t.start, end: t.end });
+    }
+    return merged;
+  }, [timedLines, stemTimings, result?.lines]);
+
   // With synced lyrics, clicking a line jumps the song back to that line.
   const handleLyricLineClick = useCallback(
     (index: number) => {
-      if (!timedLines || index < 0 || index >= timedLines.length) return;
-      songPlayerRef.current?.seekTo(timedLines[index].start);
+      if (!syncLines || index < 0 || index >= syncLines.length) return;
+      songPlayerRef.current?.seekTo(syncLines[index].start);
     },
-    [timedLines],
+    [syncLines],
   );
 
   // Binary-search the timed line that contains the current playback position
   // (with the user-adjustable offset applied).
   const activeIndex = useMemo(() => {
-    if (syncStatus !== "ok" || !timedLines || timedLines.length === 0) return null;
+    if (!syncLines || syncLines.length === 0) return null;
     const t = currentTime + lyricOffset;
-    if (t < timedLines[0].start) return -1;
-    if (t >= timedLines[timedLines.length - 1].start) {
-      return timedLines.length - 1;
+    if (t < syncLines[0].start) return -1;
+    if (t >= syncLines[syncLines.length - 1].start) {
+      return syncLines.length - 1;
     }
     let lo = 0;
-    let hi = timedLines.length - 1;
+    let hi = syncLines.length - 1;
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1;
-      if (timedLines[mid].start <= t) lo = mid;
+      if (syncLines[mid].start <= t) lo = mid;
       else hi = mid - 1;
     }
     return lo;
-  }, [syncStatus, timedLines, currentTime, lyricOffset]);
+  }, [syncLines, currentTime, lyricOffset]);
 
-  const displayLines = timedLines && timedLines.length > 0 ? timedLines : (result?.lines ?? []);
+  const displayLines = syncLines && syncLines.length > 0 ? syncLines : (result?.lines ?? []);
   // Before playback starts there is nothing to highlight; only dim lines once
   // the player actually reports a position.
   const displayActiveIndex = currentTime > 0 && activeIndex != null ? activeIndex : undefined;
@@ -981,6 +1173,30 @@ export function LyricsApp() {
                   </div>
                 ) : searchResult || artistResults ? (
                   <div className="mt-3 border-t border-border pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setResultsCollapsed((v) => !v)}
+                      aria-expanded={!resultsCollapsed}
+                      className="mb-2 flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm font-medium text-foreground transition-colors hover:border-foreground/20"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        {resultsCollapsed ? (
+                          <ChevronRight className="size-4 text-subtle" />
+                        ) : (
+                          <ChevronDown className="size-4 text-subtle" />
+                        )}
+                        Search results
+                        <span className="text-xs font-normal text-muted">
+                          ({searchResult?.results.length ?? 0} songs
+                          {artistResults && artistResults.length > 0
+                            ? `, ${artistResults.length} artists`
+                            : ""}
+                          )
+                        </span>
+                      </span>
+                    </button>
+                    {!resultsCollapsed ? (
+                      <>
                     {searchResult ? (
                       <>
                         {searchResult.results.length === 0 ? (
@@ -1074,6 +1290,8 @@ export function LyricsApp() {
                           onChange={setArtistPage}
                         />
                       </div>
+                    ) : null}
+                      </>
                     ) : null}
                   </div>
                 ) : null}
@@ -1215,117 +1433,50 @@ export function LyricsApp() {
 
           {result ? (
             <div className="space-y-2">
-              <div className="relative">
-                <SongPlayer
-                  sourceUrl={result.sourceUrl}
-                  title={result.title}
-                  onTimeChange={handleTimeChange}
-                  karaoke={karaoke}
-                  onKaraokeAction={() => {
-                    if (karaoke) {
-                      backToVocals();
-                    } else {
-                      setShowKaraokePicker(true);
-                      void generateKaraoke();
-                    }
-                  }}
-                  ref={songPlayerRef}
-                />
-                {showKaraokePicker ? (
-                  <>
-                    <div
-                      className="fixed inset-0 z-20"
-                      onClick={() => setShowKaraokePicker(false)}
-                      aria-hidden="true"
-                    />
-                    <div className="absolute right-0 top-full z-30 mt-2 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-border bg-bg shadow-2xl">
-                      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2.5">
-                        <p className="text-sm font-medium text-foreground">
-                          {t("karaoke.versions")}{" "}
-                          <span className="font-normal text-muted">
-                            {t("karaoke.byConfidence")}
-                          </span>
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => setShowKaraokePicker(false)}
-                          aria-label={t("karaoke.close")}
-                          className="flex size-7 shrink-0 items-center justify-center rounded-lg text-subtle transition-colors hover:bg-surface-2 hover:text-foreground"
-                        >
-                          <X className="size-4" />
-                        </button>
-                      </div>
-                      <div className="max-h-80 overflow-y-auto p-2">
-                        {karaokeGenerating || !karaokeCandidates ? (
-                          <p className="flex items-center gap-2 px-2 py-3 text-xs text-muted">
-                            <Loader2 className="size-3.5 animate-spin" />
-                            {t("karaoke.searching")}
-                          </p>
-                        ) : karaokeCandidates.length === 0 ? (
-                          <p className="px-2 py-3 text-xs text-muted">{t("karaoke.none")}</p>
-                        ) : (
-                          <ul className="flex flex-col gap-1">
-                            {karaokeCandidates.map((candidate) => {
-                              const confidence = karaokeConfidence(candidate.score);
-                              return (
-                                <li key={candidate.videoId}>
-                                  <button
-                                    type="button"
-                                    onClick={() => pickKaraoke(candidate)}
-                                    className="flex w-full items-center gap-2 rounded-lg border border-border px-2.5 py-2 text-left transition-colors hover:border-foreground/25"
-                                  >
-                                    <span className="shrink-0 rounded-md border border-border px-1.5 py-0.5 text-[10px] font-semibold text-muted">
-                                      {KARAOKE_KIND_LABEL[candidate.kind]}
-                                    </span>
-                                    {candidate.official ? (
-                                      <span className="shrink-0 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
-                                        公式
-                                      </span>
-                                    ) : null}
-                                    <span className="min-w-0 flex-1 truncate text-xs text-foreground">
-                                      {candidate.title}
-                                    </span>
-                                    {formatDuration(candidate.duration) ? (
-                                      <span className="shrink-0 text-[10px] tabular-nums text-subtle">
-                                        {formatDuration(candidate.duration)}
-                                      </span>
-                                    ) : null}
-                                    <span
-                                      className={cn(
-                                        "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                                        confidence === "High"
-                                          ? "bg-primary/15 text-primary"
-                                          : confidence === "Medium"
-                                            ? "bg-surface-2 text-foreground"
-                                            : "bg-border text-muted",
-                                      )}
-                                    >
-                                      {confidence}
-                                    </span>
-                                  </button>
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        )}
-                      </div>
-                    </div>
-                  </>
-                ) : null}
-              </div>
+              <SongPlayer
+                sourceUrl={result.sourceUrl}
+                title={result.title}
+                onTimeChange={handleTimeChange}
+                karaoke={karaoke}
+                onBackToVocals={backToVocals}
+                onBackToKaraoke={backToKaraoke}
+                onFindKaraoke={() => {
+                  setShowKaraokePicker(true);
+                  void generateKaraoke();
+                }}
+                karaokePickerOpen={showKaraokePicker}
+                onKaraokePickerClose={() => setShowKaraokePicker(false)}
+                karaokeCandidates={karaokeCandidates}
+                karaokeBusy={karaokeGenerating}
+                onPickKaraoke={pickKaraoke}
+                chosenKaraokeTitle={chosenKaraoke?.title}
+                stems={stems}
+                onGenerateKaraoke={
+                  utaNetSongId(result.sourceUrl) && stemsAvailable === true
+                    ? () => void pollStem(result.sourceUrl, true)
+                    : undefined
+                }
+                ref={songPlayerRef}
+              />
 
-              {karaoke && chosenKaraoke ? (
-                <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-                  <Music2 className="size-3.5 shrink-0 text-primary" />
-                  <span className="max-w-72 truncate">{chosenKaraoke.title}</span>
-                  <button
-                    type="button"
-                    onClick={() => setShowKaraokePicker(true)}
-                    className="inline-flex min-h-8 items-center gap-1 rounded-lg px-1.5 font-medium underline-offset-4 hover:text-foreground hover:underline"
-                  >
-                    {t("karaoke.changeVersion")}
-                  </button>
-                </div>
+              {stems?.state === "ready" && stems.timings === "pending" ? (
+                <p className="flex items-center gap-2 text-xs text-muted">
+                  <Loader2 className="size-3.5 animate-spin" />
+                  Aligning word timestamps…
+                </p>
+              ) : null}
+              {stems?.state === "ready" &&
+              stems.timings === "error" &&
+              ((timedLines && timedLines.length > 0) || (result?.lines ?? []).length > 0) ? (
+                <button
+                  type="button"
+                  onClick={startAlignment}
+                  className="flex h-9 items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-3 text-xs font-medium text-foreground transition-colors hover:bg-primary/20"
+                  title="Align the lyric lines to the song audio with Whisper — takes about 1-2 minutes"
+                >
+                  <Sparkles className="size-3.5" />
+                  Align word timestamps
+                </button>
               ) : null}
 
               {karaokeError && !karaoke && !showKaraokePicker ? (
@@ -1348,11 +1499,11 @@ export function LyricsApp() {
                   <Loader2 className="size-3.5 animate-spin" />
                   {t("sync.loading")}
                 </p>
-              ) : syncStatus === "ok" ? (
+              ) : syncStatus === "ok" || stemTimings ? (
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-border bg-surface px-3 py-2 text-xs text-muted">
                   <span className="flex items-center gap-1.5">
                     <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
-                    {t("sync.synced")}
+                    {stemTimings ? "Aligned word-by-word" : t("sync.synced")}
                   </span>
                   <div
                     className="flex flex-wrap items-center gap-2"
@@ -1396,7 +1547,7 @@ export function LyricsApp() {
                     </span>
                   </div>
                 </div>
-              ) : syncStatus === "none" ? (
+              ) : syncStatus === "none" && !stemTimings ? (
                 <p className="text-xs text-muted">{t("sync.none")}</p>
               ) : null}
             </div>
@@ -1461,10 +1612,11 @@ export function LyricsApp() {
                 <LyricsDisplay
                   lines={displayLines}
                   activeIndex={displayActiveIndex}
+                  activeTime={
+                    displayActiveIndex != null ? currentTime + lyricOffset : undefined
+                  }
                   onLineClick={
-                    syncStatus === "ok" && timedLines && timedLines.length > 0
-                      ? handleLyricLineClick
-                      : undefined
+                    syncLines && syncLines.length > 0 ? handleLyricLineClick : undefined
                   }
                   showFurigana={showFurigana}
                   katakanaAid={katakanaAid}

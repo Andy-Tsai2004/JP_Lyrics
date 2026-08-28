@@ -18,6 +18,8 @@ export default tseslint.config(
       "coverage/**",
       "public/kuromoji-dict/**",
       "src/routeTree.gen.ts",
+      ".venv-stems/**",
+      "stems-service/.venv/**",
     ],
   },
   js.configs.recommended,

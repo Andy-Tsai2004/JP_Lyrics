@@ -11,7 +11,9 @@ import type { LyricsResult } from "./types";
 const BAHAMUT_HOST = /(^|\.)gamer\.com\.tw$/i;
 const UTANET_HOST = /(^|\.)uta-net\.com$/i;
 
-const CACHE_PREFIX = "jplyrics:cache:v2:";
+// v3: jina now renders Uta-Net titles in its "Title:" header instead of page
+// headings; bump so stale cached titles ("Japanese lyrics") re-fetch.
+const CACHE_PREFIX = "jplyrics:cache:v3:";
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // keep lyrics for a week
 
 type CacheEntry = {

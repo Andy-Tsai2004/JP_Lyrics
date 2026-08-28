@@ -1,10 +1,34 @@
-import { Loader2, Music2, Pause, Play, Sparkles, Volume1, Volume2, VolumeX } from "lucide-react";
-import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import {
+  Loader2,
+  Mic,
+  Music2,
+  Pause,
+  Play,
+  Sparkles,
+  Volume1,
+  Volume2,
+  VolumeX,
+  X,
+} from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import type { Ref } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { splitTitle } from "@/lib/lyrics/lrc";
-import { resolveKaraokeVideoId, resolveVideoId, youtubeSearchUrl } from "@/lib/lyrics/video";
+import {
+  karaokeConfidence,
+  resolveKaraokeVideoId,
+  resolveVideoId,
+  youtubeSearchUrl,
+  type KaraokeCandidate,
+} from "@/lib/lyrics/video";
+import type { StemInfo } from "@/lib/stems";
 import { useI18n } from "@/lib/i18n";
 
 const PLAYER_ELEMENT_ID = "jplyrics-youtube-player";
@@ -31,6 +55,7 @@ export type SongPlayerHandle = {
 type YTPlayer = {
   playVideo: () => void;
   pauseVideo: () => void;
+  loadVideoById: (videoId: string) => void;
   seekTo: (seconds: number, allowSeekAhead?: boolean) => void;
   getCurrentTime: () => number;
   getDuration: () => number;
@@ -93,12 +118,41 @@ function formatTime(seconds: number): string {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
+const KARAOKE_KIND_LABEL: Record<KaraokeCandidate["kind"], string> = {
+  karaoke: "カラオケ",
+  "off-vocal": "オフボーカル",
+  instrumental: "インスト",
+  backing: "伴奏",
+  piano: "ピアノ",
+};
+
+/** Format a duration in seconds as "m:ss" (or "h:mm:ss" for >= 1 hour). */
+function formatDuration(seconds?: number): string | null {
+  if (!seconds || seconds <= 0 || !Number.isFinite(seconds)) return null;
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
 export function SongPlayer({
   sourceUrl,
   title,
   onTimeChange,
   karaoke = false,
-  onKaraokeAction,
+  onBackToVocals,
+  onBackToKaraoke,
+  onFindKaraoke,
+  karaokePickerOpen = false,
+  onKaraokePickerClose,
+  karaokeCandidates = null,
+  karaokeBusy = false,
+  onPickKaraoke,
+  chosenKaraokeTitle,
+  stems = null,
+  onGenerateKaraoke,
   ref,
 }: {
   sourceUrl: string;
@@ -107,8 +161,28 @@ export function SongPlayer({
   onTimeChange?: (seconds: number) => void;
   /** When true, resolve and play a karaoke / off-vocal video instead of the official one. */
   karaoke?: boolean;
-  /** Fired when the karaoke variant button is clicked (find / back-to-vocals). */
-  onKaraokeAction?: () => void;
+  /** Switch from karaoke back to the original vocal. */
+  onBackToVocals?: () => void;
+  /** Switch from the original vocal back to the chosen karaoke version. */
+  onBackToKaraoke?: () => void;
+  /** Open the karaoke-version picker to browse / change versions. */
+  onFindKaraoke?: () => void;
+  /** Whether the karaoke-version dropdown is open. */
+  karaokePickerOpen?: boolean;
+  /** Close the karaoke-version dropdown. */
+  onKaraokePickerClose?: () => void;
+  /** Ranked backing-track candidates to show in the dropdown. */
+  karaokeCandidates?: KaraokeCandidate[] | null;
+  /** True while karaoke candidates are being searched. */
+  karaokeBusy?: boolean;
+  /** Pick a candidate as the active backing track. */
+  onPickKaraoke?: (candidate: KaraokeCandidate) => void;
+  /** Title of the currently-selected backing track. */
+  chosenKaraokeTitle?: string;
+  /** An auto-generated off-vocal stem served by the generator service. */
+  stems?: StemInfo | null;
+  /** When provided (and no stem is ready), the user can start generation. */
+  onGenerateKaraoke?: () => void;
   ref?: Ref<SongPlayerHandle>;
 }) {
   const { t } = useI18n();
@@ -116,8 +190,11 @@ export function SongPlayer({
   const sourceRef = useRef(sourceUrl);
   const karaokeRef = useRef(karaoke);
   const statusRef = useRef<PlayerStatus>("idle");
-  const handlePlayRef = useRef<() => void>(() => {});
-  const startWithVideoIdRef = useRef<(videoId: string) => void>(() => {});
+  const creatingRef = useRef(false);
+  // Cached resolved video ids so switching between vocal / karaoke is instant.
+  const videoIdRef = useRef<{ vocal?: string; karaoke?: string }>({});
+  // Always-fresh reference to playCurrent for the imperative handle.
+  const playCurrentRef = useRef<() => void>(() => {});
   const tickTimer = useRef<number | null>(null);
   const pendingSeekRef = useRef<number | null>(null);
   const onTimeChangeRef = useRef(onTimeChange);
@@ -129,6 +206,18 @@ export function SongPlayer({
   const [muted, setMuted] = useState(false);
   const volumeRef = useRef(volume);
   const mutedRef = useRef(muted);
+
+  // The generated off-vocal stem plays from a page-owned <audio> element (the
+  // YouTube embed's audio is unreachable by the page).
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
+  // Auto-generated stem: the full mix + off-vocal files we swap between at
+  // the same timestamp (karaoke plays off-vocal by default, vocals optional).
+  const [stemFiles, setStemFiles] = useState<{ full: string; vocals: string } | null>(null);
+  const [stemActive, setStemActive] = useState(false);
+  const [vocalOn, setVocalOn] = useState(false);
+  const audioMode = stemActive;
+  const audioModeRef = useRef(audioMode);
+  audioModeRef.current = audioMode;
 
   useEffect(() => {
     volumeRef.current = volume;
@@ -170,12 +259,24 @@ export function SongPlayer({
     stopTick();
     playerRef.current?.destroy();
     playerRef.current = null;
+    videoIdRef.current = { vocal: undefined, karaoke: undefined };
     pendingSeekRef.current = null;
     statusRef.current = "idle";
     setStatus("idle");
     setCurrent(0);
     setDuration(0);
     setError(null);
+    // Stop any page-owned <audio> (auto stem or manual upload) too — the
+    // previous song must not keep playing while the next one loads/generates.
+    const a = audioElRef.current;
+    if (a) {
+      a.pause();
+      a.removeAttribute("src");
+      a.load();
+    }
+    setStemFiles(null);
+    setStemActive(false);
+    setVocalOn(false);
   }, [stopTick]);
 
   useEffect(() => {
@@ -192,32 +293,76 @@ export function SongPlayer({
     };
   }, [sourceUrl, reset, stopTick]);
 
+  // Pre-resolve the official vocal video so switching back from karaoke to
+  // vocals is instant even if the vocal was never played first.
+  useEffect(() => {
+    let cancelled = false;
+    void resolveVideoId(sourceRef.current).then((id) => {
+      if (!cancelled) videoIdRef.current.vocal = id ?? undefined;
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceUrl]);
+
+  /** Resolve (or reuse) the cached video id for the current vocal/karaoke variant. */
+  async function resolveIdFor(mode: boolean): Promise<string | null> {
+    if (mode) {
+      if (!videoIdRef.current.karaoke) {
+        videoIdRef.current.karaoke =
+          (await resolveKaraokeVideoId(title).catch(() => null)) ?? undefined;
+      }
+      return videoIdRef.current.karaoke ?? null;
+    }
+    if (!videoIdRef.current.vocal) {
+      videoIdRef.current.vocal =
+        (await resolveVideoId(sourceRef.current).catch(() => null)) ?? undefined;
+    }
+    return videoIdRef.current.vocal ?? null;
+  }
+
+  /**
+   * Switch the active video instantly by reusing the same iframe: loading a new
+   * video id on a live player is a single in-place swap, so vocal ↔ karaoke
+   * toggles feel immediate (no re-fetch, no spinner, no player rebuild).
+   */
+  function switchVideo(videoId: string) {
+    setError(null);
+    if (playerRef.current) {
+      playerRef.current.loadVideoById(videoId);
+      return;
+    }
+    setStatus("loading");
+    void startWithVideoId(videoId);
+  }
+
   async function handlePlay() {
-    if (statusRef.current === "resolving" || statusRef.current === "loading") return;
+    if (audioMode) {
+      audioElRef.current?.play();
+      return;
+    }
     if (playerRef.current) {
       playerRef.current.playVideo();
       return;
     }
-
     setStatus("resolving");
     setError(null);
-    const target = sourceUrl;
+    const target = sourceRef.current;
     const mode = karaokeRef.current;
-
-    const videoId = mode ? await resolveKaraokeVideoId(title) : await resolveVideoId(target);
+    const videoId = await resolveIdFor(mode);
     if (target !== sourceRef.current || mode !== karaokeRef.current) return; // song/variant changed while resolving
     if (!videoId) {
       setStatus("error");
       setError(mode ? t("player.error.noKaraoke") : t("player.error.noEmbed"));
       return;
     }
-
-    startWithVideoId(videoId);
+    switchVideo(videoId);
   }
-  handlePlayRef.current = handlePlay;
 
-  /** Load and play a specific YouTube video id (skips resolve; used by the picker). */
+  /** Create the YouTube player for a video id (only on first playback). */
   function startWithVideoId(videoId: string) {
+    if (creatingRef.current || playerRef.current) return;
+    creatingRef.current = true;
     const target = sourceRef.current;
     setStatus("loading");
     void (async () => {
@@ -239,7 +384,9 @@ export function SongPlayer({
               playerRef.current = event.target;
               event.target.setVolume(volumeRef.current);
               if (mutedRef.current) event.target.mute();
-              event.target.playVideo();
+              // If the stem audio already took over while the player was
+              // loading, don't start the video over it (double playback).
+              if (!audioModeRef.current) event.target.playVideo();
               if (pendingSeekRef.current != null) {
                 event.target.seekTo(pendingSeekRef.current, true);
                 pendingSeekRef.current = null;
@@ -252,8 +399,11 @@ export function SongPlayer({
                   startTick();
                   break;
                 case 2: // paused
-                  setStatus("paused");
+                  // Stop polling the (now paused) video for time — the audio
+                  // element drives the transport once the stem takes over.
                   stopTick();
+                  if (audioModeRef.current) break;
+                  setStatus("paused");
                   break;
                 case 0: // ended
                   setStatus("ended");
@@ -274,28 +424,157 @@ export function SongPlayer({
       } catch {
         setStatus("error");
         setError(t("player.error.load"));
+      } finally {
+        creatingRef.current = false;
       }
     })();
   }
-  startWithVideoIdRef.current = startWithVideoId;
+
+  /** Resolve (or reuse) the id for the current variant and switch to it. */
+  async function playCurrent() {
+    // Picking a YouTube version (karaoke picker / back-to-vocals) takes over
+    // from any page-owned stem audio — stop it first so the two never overlap.
+    if (audioModeRef.current) {
+      const a = audioElRef.current;
+      if (a) {
+        a.pause();
+        a.removeAttribute("src");
+        a.load();
+      }
+      setStemActive(false);
+      setStemFiles(null);
+    }
+    const target = sourceRef.current;
+    const mode = karaokeRef.current;
+    // A cached id means the switch can happen instantly — skip the spinner.
+    const cached = (mode ? videoIdRef.current.karaoke : videoIdRef.current.vocal) ?? null;
+    let videoId = cached;
+    if (!videoId) {
+      setStatus("resolving");
+      setError(null);
+      videoId = await resolveIdFor(mode);
+    }
+    if (target !== sourceRef.current || mode !== karaokeRef.current) return;
+    if (!videoId) {
+      setStatus("error");
+      setError(
+        mode ? "找不到可直接嵌入的卡拉OK／伴奏影片。" : "這個來源沒有可直接嵌入的官方影片。",
+      );
+      return;
+    }
+    switchVideo(videoId);
+  }
+  playCurrentRef.current = () => {
+    void playCurrent();
+  };
+
+  // Keep the shared transport in sync with the <audio> element in audio mode.
+  useEffect(() => {
+    const a = audioElRef.current;
+    if (!a) return;
+    const onTime = () => {
+      setCurrent(a.currentTime || 0);
+      onTimeChangeRef.current?.(a.currentTime || 0);
+    };
+    const onDur = () => {
+      if (a.duration && Number.isFinite(a.duration)) setDuration(a.duration);
+    };
+    const onPlay = () => setStatus("playing");
+    const onPause = () => setStatus("paused");
+    const onEnded = () => {
+      setStatus("ended");
+      setCurrent(0);
+      onTimeChangeRef.current?.(0);
+    };
+    a.addEventListener("timeupdate", onTime);
+    a.addEventListener("durationchange", onDur);
+    a.addEventListener("loadedmetadata", onDur);
+    a.addEventListener("play", onPlay);
+    a.addEventListener("pause", onPause);
+    a.addEventListener("ended", onEnded);
+    return () => {
+      a.removeEventListener("timeupdate", onTime);
+      a.removeEventListener("durationchange", onDur);
+      a.removeEventListener("loadedmetadata", onDur);
+      a.removeEventListener("play", onPlay);
+      a.removeEventListener("pause", onPause);
+      a.removeEventListener("ended", onEnded);
+    };
+  }, []);
+
+  // ---- Auto-detected off-vocal stem: adopt it when the service reports ready ----
+  useEffect(() => {
+    if (stems?.state === "ready") {
+      setStemFiles({ full: stems.full, vocals: stems.vocals });
+    } else {
+      setStemFiles(null);
+      setStemActive(false);
+    }
+  }, [stems?.state, stems?.full, stems?.vocals]);
+
+  // Play the stem as soon as it's ready — the off-vocal (karaoke) by default,
+  // or the full mix once the user has switched vocals on.
+  useEffect(() => {
+    if (!stemFiles || stemActive) return;
+    const a = audioElRef.current;
+    if (a) {
+      // Never overlap the YouTube player: pause it, and if it was playing,
+      // resume the stem at the same position (both are the same recording).
+      const videoTime = playerRef.current?.getCurrentTime?.() ?? 0;
+      const resumeAt = Number.isFinite(videoTime) && videoTime > 0 ? videoTime : 0;
+      playerRef.current?.pauseVideo();
+      a.src = vocalOn ? stemFiles.full : stemFiles.vocals;
+      a.load();
+      a.play().catch(() => {});
+      a.currentTime = resumeAt;
+    }
+    setStemActive(true);
+  }, [stemFiles, stemActive, vocalOn]);
+
+  function toggleVocal() {
+    const a = audioElRef.current;
+    if (!stemFiles || !a) return;
+    // Swap between the full mix (vocals on) and the off-vocal stem at the
+    // same timestamp — both are the same recording, so alignment holds.
+    playerRef.current?.pauseVideo();
+    const t = a.currentTime;
+    a.src = vocalOn ? stemFiles.vocals : stemFiles.full;
+    a.load();
+    a.play().catch(() => {});
+    a.currentTime = t;
+    setVocalOn(!vocalOn);
+  }
 
   function handlePause() {
+    if (audioMode) {
+      audioElRef.current?.pause();
+      return;
+    }
     playerRef.current?.pauseVideo();
   }
 
   function handleSeek(value: number) {
     setCurrent(value);
     onTimeChangeRef.current?.(value);
+    if (audioMode) {
+      if (audioElRef.current) audioElRef.current.currentTime = value;
+      return;
+    }
     playerRef.current?.seekTo(value, true);
   }
 
   function handleVolumeChange(value: number) {
     setVolume(value);
     playerRef.current?.setVolume(value);
+    // The off-vocal stem plays from the page-owned <audio> element — keep its
+    // volume in sync too.
+    const a = audioElRef.current;
+    if (a) a.volume = value / 100;
     // Dragging the slider always restores audible output.
     if (muted) {
       setMuted(false);
       playerRef.current?.unMute();
+      if (a) a.muted = false;
     }
   }
 
@@ -304,6 +583,8 @@ export function SongPlayer({
     setMuted(next);
     if (next) playerRef.current?.mute();
     else playerRef.current?.unMute();
+    const a = audioElRef.current;
+    if (a) a.muted = next;
   }
 
   // Expose an external seek so lyric lines can jump the song back to a line's
@@ -318,28 +599,33 @@ export function SongPlayer({
         pendingSeekRef.current = seconds;
         setCurrent(seconds);
         onTimeChangeRef.current?.(seconds);
+        if (audioModeRef.current) {
+          const a = audioElRef.current;
+          if (a) {
+            a.currentTime = seconds;
+            if (a.paused) a.play().catch(() => {});
+          }
+          return;
+        }
         const player = playerRef.current;
         if (player) {
           player.seekTo(seconds, true);
           if (statusRef.current !== "playing") player.playVideo();
         }
       },
-      // Swap the source on demand: reset the current video, pick the requested
-      // variant, and load+play it. The "Generate karaoke" control uses this so
-      // the backing track starts the moment the button is clicked.
+      // Switch vocal ↔ karaoke instantly, reusing the existing player.
       play: (variant) => {
-        reset();
         karaokeRef.current = variant === "karaoke";
-        void handlePlayRef.current();
+        playCurrentRef.current();
       },
       // Play a specific backing video the user picked from the ranked list.
       playKaraokeVideo: (videoId) => {
-        reset();
         karaokeRef.current = true;
-        startWithVideoIdRef.current(videoId);
+        videoIdRef.current.karaoke = videoId;
+        playCurrentRef.current();
       },
     }),
-    [reset],
+    [],
   );
 
   const isBusy = status === "resolving" || status === "loading";
@@ -355,6 +641,8 @@ export function SongPlayer({
       >
         <div id={PLAYER_ELEMENT_ID} />
       </div>
+
+      <audio ref={audioElRef} className="hidden" />
 
       <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-surface p-3">
         <Button
@@ -382,7 +670,7 @@ export function SongPlayer({
           step={0.5}
           value={Math.min(current, max || 100)}
           onChange={(e) => handleSeek(Number(e.target.value))}
-          disabled={!playerRef.current || max === 0}
+          disabled={(!playerRef.current && !audioMode) || max === 0}
           className="h-1.5 w-full min-w-0 accent-primary disabled:cursor-default disabled:opacity-40"
           aria-label={t("player.position")}
         />
@@ -414,26 +702,174 @@ export function SongPlayer({
             step={1}
             value={muted ? 0 : volume}
             onChange={(e) => handleVolumeChange(Number(e.target.value))}
-            disabled={!playerRef.current}
+            disabled={!playerRef.current && !audioMode}
             className="h-1.5 w-16 accent-primary sm:w-20 disabled:cursor-default disabled:opacity-40"
             aria-label={t("player.volume")}
           />
         </div>
 
-        <button
-          type="button"
-          onClick={onKaraokeAction}
-          className={cn(
-            "flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors",
-            karaoke
-              ? "border-primary/40 bg-primary/10 text-foreground hover:bg-primary/20"
-              : "border-border text-muted hover:text-foreground",
-          )}
-          title={karaoke ? t("player.backToVocalsTitle") : t("player.findKaraokeTitle")}
-        >
-          {karaoke ? <Music2 className="size-3.5" /> : <Sparkles className="size-3.5" />}
-          {karaoke ? t("player.backToVocals") : t("player.findKaraoke")}
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {stems?.state === "generating" ? (
+            <span className="flex items-center gap-1.5 text-xs text-muted">
+              <Loader2 className="size-3.5 animate-spin" /> Generating off-vocal…
+            </span>
+          ) : null}
+          {stems == null && onGenerateKaraoke ? (
+            <button
+              type="button"
+              onClick={onGenerateKaraoke}
+              className="flex h-9 items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-3 text-xs font-medium text-foreground transition-colors hover:bg-primary/20"
+              title="Generate the off-vocal (karaoke) version with Demucs — takes about 1-2 minutes"
+            >
+              <Sparkles className="size-3.5" />
+              Generate karaoke
+            </button>
+          ) : null}
+          {stemActive ? (
+            <>
+              <button
+                type="button"
+                onClick={toggleVocal}
+                className={cn(
+                  "flex h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors",
+                  vocalOn
+                    ? "border-primary/40 bg-primary/10 text-foreground hover:bg-primary/20"
+                    : "border-border text-muted hover:text-foreground",
+                )}
+                title={
+                  vocalOn
+                    ? "Switch to the off-vocal (karaoke) version"
+                    : "Switch back to the version with vocals"
+                }
+              >
+                <Mic className="size-3.5" />
+                {vocalOn ? "Vocals off" : "Vocals on"}
+              </button>
+            </>
+          ) : null}
+        </div>
+
+        <div className="relative flex shrink-0 items-center gap-2">
+          {chosenKaraokeTitle && !audioMode ? (
+            <button
+              type="button"
+              onClick={karaoke ? onBackToVocals : onBackToKaraoke}
+              className={cn(
+                "flex h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors",
+                karaoke
+                  ? "border-primary/40 bg-primary/10 text-foreground hover:bg-primary/20"
+                  : "border-border text-muted hover:text-foreground",
+              )}
+              title={
+                karaoke
+                  ? "Switch back to the original vocal video"
+                  : "Switch back to the chosen karaoke version"
+              }
+            >
+                <Music2 className="size-3.5" />
+                {karaoke ? t("player.backToVocals") : "Back to karaoke"}
+              </button>
+          ) : null}
+
+            <button
+              type="button"
+              onClick={onFindKaraoke}
+              className="flex h-9 items-center gap-1.5 rounded-full border border-border px-3 text-xs font-medium text-muted transition-colors hover:text-foreground"
+              title={t("player.findKaraokeTitle")}
+            >
+              <Sparkles className="size-3.5" />
+              {t("player.findKaraoke")}
+            </button>
+
+            {karaokePickerOpen ? (
+              <>
+                <div
+                  className="fixed inset-0 z-20"
+                  onClick={onKaraokePickerClose}
+                  aria-hidden="true"
+                />
+                <div className="absolute right-0 top-full z-30 mt-2 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-border bg-bg shadow-2xl">
+                  <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2.5">
+                    <p className="text-sm font-medium text-foreground">
+                      Karaoke versions{" "}
+                      <span className="font-normal text-muted">— by confidence</span>
+                    </p>
+                    <button
+                      type="button"
+                      onClick={onKaraokePickerClose}
+                      aria-label="Close karaoke options"
+                      className="flex size-7 shrink-0 items-center justify-center rounded-lg text-subtle transition-colors hover:bg-surface-2 hover:text-foreground"
+                    >
+                      <X className="size-4" />
+                    </button>
+                  </div>
+                  <div className="max-h-80 overflow-y-auto p-2">
+                    {karaokeBusy || !karaokeCandidates ? (
+                      <p className="flex items-center gap-2 px-2 py-3 text-xs text-muted">
+                        <Loader2 className="size-3.5 animate-spin" />
+                        Searching karaoke…
+                      </p>
+                    ) : karaokeCandidates.length === 0 ? (
+                      <p className="px-2 py-3 text-xs text-muted">
+                        No backing track found for this song.
+                      </p>
+                    ) : (
+                      <ul className="flex flex-col gap-1">
+                        {karaokeCandidates.map((candidate) => {
+                          const confidence = karaokeConfidence(candidate.score);
+                          return (
+                            <li key={candidate.videoId}>
+                              <button
+                                type="button"
+                                onClick={() => onPickKaraoke?.(candidate)}
+                                className="flex w-full items-center gap-2 rounded-lg border border-border px-2.5 py-2 text-left transition-colors hover:border-foreground/25"
+                              >
+                                <span className="shrink-0 rounded-md border border-border px-1.5 py-0.5 text-[10px] font-semibold text-muted">
+                                  {KARAOKE_KIND_LABEL[candidate.kind]}
+                                </span>
+                                {candidate.official ? (
+                                  <span className="shrink-0 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                                    公式
+                                  </span>
+                                ) : null}
+                                <span className="min-w-0 flex-1 truncate text-xs text-foreground">
+                                  {candidate.title}
+                                </span>
+                                {formatDuration(candidate.duration) ? (
+                                  <span className="shrink-0 text-[10px] tabular-nums text-subtle">
+                                    {formatDuration(candidate.duration)}
+                                  </span>
+                                ) : null}
+                                <span
+                                  className={cn(
+                                    "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                                    confidence === "High"
+                                      ? "bg-primary/15 text-primary"
+                                      : confidence === "Medium"
+                                        ? "bg-surface-2 text-foreground"
+                                        : "bg-border text-muted",
+                                  )}
+                                >
+                                  {confidence}
+                                </span>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : null}
+        </div>
+
+        {!audioMode && chosenKaraokeTitle ? (
+          <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted">
+            <Music2 className="size-3.5 shrink-0 text-primary" />
+            <span className="max-w-48 truncate">{chosenKaraokeTitle}</span>
+          </div>
+        ) : null}
       </div>
 
       {error ? (

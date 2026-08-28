@@ -1,97 +1,66 @@
-# JP_Lyris
+# JP_Lyrics
 
-## Quick Start
+A Japanese lyrics viewer: search Uta-Net by song name, artist, or full lyrics
+(歌詞) with a live romaji→kana input (`yorunikakeru` becomes よるにかける as you
+type; English typed before switching to Japanese input is never converted;
+toggle あ/A or press Ctrl+; to switch), with songs sorted by Uta-Net popularity
+and artist results opening that artist's full song list, or paste a Bahamut
+artwork link / Uta-Net song link, and it keeps only the Japanese lines and
+places ruby readings (振り仮名) above the kanji. Katakana aid can be shown in
+hiragana or romaji, and the font size is adjustable.
+
+## Live demo
+
+The app is a static site and is deployed to GitHub Pages:
+
+<https://luszechai.github.io/JP_Lyrics/>
+
+## Run locally
 
 ```bash
-cd JP_Lyris
 npm install
 npm run dev
 ```
 
-Then open:
+Then open <http://localhost:8080>.
 
-```text
-http://localhost:8080
-```
+## Deploy to GitHub Pages
 
-JP_Lyris is a small Japanese lyrics viewer that fetches lyrics from Bahamut artwork pages, strips them down to the Japanese lines, and adds reading support with furigana, hiragana, or romaji overlays.
+1. Push to the `main` branch. The included workflow
+   (`.github/workflows/deploy-pages.yml`) runs `npm ci` + `npm run build:pages`,
+   uploads `dist/` as an artifact and deploys it with the official
+   `actions/deploy-pages` action.
+2. One-time setup: in the repository **Settings → Pages**, set **Source** to
+   **GitHub Actions** (Build and deployment). No branch needs to be selected.
 
-It is built as a Vite + React app with TanStack Router / Start, styled with Tailwind, and uses Kuroshiro for Japanese text processing.
+After the workflow finishes, the site will be live at
+`https://<user>.github.io/<repo>/`. You can also re-run the deployment manually
+from the **Actions** tab (the workflow supports `workflow_dispatch`).
 
-## Features
+The repository must be public or on a GitHub Pro plan for GitHub Pages to be
+enabled.
 
-- Paste a Bahamut artwork URL and load the lyrics automatically
-- Keep only the Japanese lyric lines from the original page
-- Add ruby-style furigana above kanji for easier reading
-- Toggle optional kana or romaji assist mode
-- Resize the lyric display for comfort reading
-- Includes a sample post so the app can be tested immediately
-
-## What the app does
-
-The app accepts a Bahamut post URL, fetches the content server-side, extracts the relevant Japanese lyric text, and then renders it in a clean reading interface. The output keeps the title and lyric lines while applying Japanese reading assistance on top of the text.
-
-## Tech stack
-
-- React 19
-- Vite
-- TanStack Router and Start
-- TypeScript
-- Tailwind CSS
-- Kuroshiro / Kuromoji
-- Better Auth (optional app auth layer)
-- PGLite for embedded local storage
-
-## Project structure
-
-```text
-JP_Lyris/
-├── README.md
-├── package.json
-├── JP_lyris/               # Application source and runtime files
-│   ├── src/
-│   ├── scripts/
-│   ├── server/
-│   ├── public/
-│   ├── migrations/
-│   └── ...
-└── package-lock.json
-```
-
-## Getting started
-
-From the repository root:
+### Manual build for GitHub Pages
 
 ```bash
-cd JP_Lyris
-npm install
-npm run dev
+npm run build:pages    # outputs ./dist with base /JP_Lyrics/
+npm run preview:pages  # serve the built site locally (http://127.0.0.1:8081/JP_Lyrics/)
 ```
 
-Then open the app in a browser at:
+### Note about fetching lyrics
 
-```text
-http://localhost:8080
-```
+GitHub Pages only hosts static files, so the app fetches both Uta-Net search
+results and lyric pages from the browser through public CORS proxies (r.jina.ai
+for markdown first, allorigins / codetabs for raw HTML as a fallback). Fetched
+lyrics are cached in `localStorage` for a week, so revisiting the same song is
+instant.
 
-## Available scripts
+## Scripts
 
-```bash
-npm run dev          # start the Vite dev server
-npm run build        # production build and DB migration
-npm run preview      # preview the built app
-npm run typecheck    # TypeScript validation
-npm run test         # run Node-based project tests
-npm run lint         # ESLint validation
-npm run format       # format the codebase with Prettier
-```
-
-## Notes
-
-- The app is configured to run on port 8080 for the local preview environment.
-- The lyrics parser is tuned for Bahamut Japanese artwork pages.
-- The project includes optional auth and persistence scaffolding, but the current app behavior is centered around the Japanese lyrics reader experience.
-
-## License
-
-This project is provided for local development and demo use unless a separate license is added by the repository owner.
+- `npm run dev` — Vite dev server on port 8080
+- `npm run build` — production build (base `/`)
+- `npm run build:pages` — production build for GitHub Pages (base `/JP_Lyrics/`)
+- `npm run preview` — preview a production build (base `/`)
+- `npm run preview:pages` — preview the GitHub Pages build at `/JP_Lyrics/`
+- `npm run typecheck` — TypeScript check
+- `npm run test` / `npm run lint` / `npm run format`
